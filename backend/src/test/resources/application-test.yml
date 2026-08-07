@@ -1,0 +1,27 @@
+# 자동화 테스트 전용 프로필. 실제 로컬 MySQL 없이도 @SpringBootTest(H2 인메모리 DB)가 동작한다.
+# @ActiveProfiles("test")로 활성화한다.
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:festival_budget_test;MODE=MySQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    open-in-view: false
+
+logging:
+  level:
+    com.festival.budgetassist: INFO
+
+# 테스트에서 관리자 API/계산 상세를 검증할 수 있도록 기본 켬. 개별 테스트가 필요하면
+# @TestPropertySource(properties = "festival.admin-ui.enabled=false")로 덮어쓸 수 있다.
+festival:
+  admin-ui:
+    enabled: true
+  calculation-trace:
+    enabled: true

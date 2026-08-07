@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: budget-assist
+
+  profiles:
+    active: local
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+# ---------------------------------------------------------------------------
+# 엑셀 Import CLI 설정 (FestivalDataImportRunner)
+# 실제 값은 여기 두지 않는다 - 개인정보가 포함된 원본 파일 경로를 커밋하지 않기 위해
+# 환경변수 또는 명령행 인자로만 전달한다. 자세한 사용법은 backend/.env.example, README 참고.
+#
+# festival.excel.path : 원본 엑셀 파일의 절대 경로.
+#                        환경변수 FESTIVAL_EXCEL_PATH 로 설정하면 relaxed binding으로 자동 매핑됨.
+# import.run           : true일 때만 Import 실행 (기본값 false, 일반 서버 실행 시 절대 자동 실행 안 됨)
+# import.dataset-year  : 기본값 2026
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 관리자 데이터 검증 API/화면 (AdminDatasetController, /admin/datasets)
+# 기본값은 false - 이 컨트롤러는 로컬 개발 환경에서만 켠다(application-local.yml 참고).
+# 운영 환경에서는 절대 true로 두지 않는다. 쓰기/업로드 API는 없고 전부 읽기 전용이다.
+#
+# calculation-trace.enabled : true면 POST /api/v1/budget-estimates 응답에 계산 단계별
+#   추적(calculationTrace)을 포함한다. 로컬 개발 전용 - 운영에서는 false로 둔다.
+#
+# algorithm.* : 예산 추정 알고리즘의 가중치/임계값 전체. 기본값은 AlgorithmConfig.java에
+#   안내서 원안 그대로 정의되어 있고, 필요하면 festival.algorithm.<필드명> 형태로 여기서
+#   덮어쓸 수 있다(예: festival.algorithm.duration-elasticity: 0.6).
+# ---------------------------------------------------------------------------
+festival:
+  admin-ui:
+    enabled: false
+  calculation-trace:
+    enabled: false

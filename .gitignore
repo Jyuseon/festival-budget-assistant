@@ -1,0 +1,22 @@
+# 루트 - 하위 프로젝트별 .gitignore 를 우선 사용하고, 여기서는 공통 항목만 관리
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 환경변수 / 비밀값
+.env
+.env.local
+*.local.yml
+
+# 원본 데이터 (개인정보 포함 가능 - 실제 파일은 저장소 밖 경로를 참조하고 커밋하지 않는다)
+data/raw/*.xlsx
+data/raw/*.xls
+
+# 에디터 백업
+*.swp
