@@ -29,6 +29,17 @@ management:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+# 다년도(2017~2026) sanitized CSV Import CLI (MultiYearCsvImportRunner)
+# 개발 단계 검증 전용 - claude_multiyear_festival_package/data/festival_2017_2026_sanitized.csv
+# 를 DB에 적재해 다년도 알고리즘을 실험하기 위한 것이며, 기존 2026 전용 Import/엔티티와는
+# 완전히 별도 경로다(multi_year_festival_record 테이블).
+#
+# festival.multiyear-csv.path : sanitized CSV 파일의 절대 경로.
+#                                환경변수 FESTIVAL_MULTIYEAR_CSV_PATH 로 설정 가능.
+# import.multiyear-run         : true일 때만 실행 (기본값 false)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # 관리자 데이터 검증 API/화면 (AdminDatasetController, /admin/datasets)
 # 기본값은 false - 이 컨트롤러는 로컬 개발 환경에서만 켠다(application-local.yml 참고).
 # 운영 환경에서는 절대 true로 두지 않는다. 쓰기/업로드 API는 없고 전부 읽기 전용이다.
