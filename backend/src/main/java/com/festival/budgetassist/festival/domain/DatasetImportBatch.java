@@ -70,6 +70,12 @@ public class DatasetImportBatch {
     /**
      * 전체 집계 리포트(JSON)와 경고 메시지를 담는다. 이름은 가이드 문서의 DatasetImportBatch
      * 스키마를 그대로 따랐지만, 실패 사유뿐 아니라 성공 시의 상세 통계도 함께 저장한다.
+     *
+     * <p>TODO(bugfix, 별도 처리 예정): {@code @Lob}만으로는 이 프로젝트의 Hibernate/MySQL 조합에서
+     * {@code TINYTEXT}(255바이트)로 매핑되는 것을 {@code MultiYearImportBatch.errorSummary}에서
+     * 확인했다({@code columnDefinition="LONGTEXT"}로 해결). 이 필드도 긴 한글 경고 요약이 쌓이면
+     * 같은 truncation 위험이 있으나, 2026 production 엔티티라 이번 다년도 admin UI 작업 범위에서는
+     * 건드리지 않는다.</p>
      */
     @Lob
     @Column(name = "error_summary")

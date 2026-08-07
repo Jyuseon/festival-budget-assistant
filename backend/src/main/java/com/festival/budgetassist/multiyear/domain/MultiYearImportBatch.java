@@ -80,7 +80,12 @@ public class MultiYearImportBatch {
     @Column(name = "status", nullable = false, length = 20)
     private ImportStatus status;
 
+    /**
+     * {@code @Lob}만으로는 Hibernate가 MySQL에서 {@code TINYTEXT}(255바이트)로 매핑해 실제
+     * 경고 요약(한글, 최대 수천 바이트)이 truncation 예외를 일으켰다 - {@code columnDefinition}으로
+     * 명시적으로 충분히 큰 타입을 강제한다.
+     */
     @Lob
-    @Column(name = "error_summary")
+    @Column(name = "error_summary", columnDefinition = "LONGTEXT")
     private String errorSummary;
 }

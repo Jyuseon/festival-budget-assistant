@@ -12,8 +12,12 @@ import java.util.Map;
  *
  * <p>객체는 {@code Map<String,Object>}, 배열은 {@code List<Object>}, 숫자는 {@code Double},
  * 문자열/불리언/null은 각각 그대로 매핑한다.</p>
+ *
+ * <p>{@code public}인 이유: {@code admin.multiyear} 패키지의 실데이터 acceptance 테스트도
+ * 같은 manifest JSON을 읽어야 해서 재사용한다(패키지 간 테스트 유틸이라 jackson을 새로
+ * 추가하지 않는 편이 낫다).</p>
  */
-final class SimpleJsonParser {
+public final class SimpleJsonParser {
 
     private final String text;
     private int pos;
@@ -22,7 +26,7 @@ final class SimpleJsonParser {
         this.text = text;
     }
 
-    static Object parse(String text) {
+    public static Object parse(String text) {
         SimpleJsonParser parser = new SimpleJsonParser(text);
         parser.skipWhitespace();
         Object value = parser.parseValue();

@@ -113,7 +113,11 @@ export type AdminApiResult<T> =
   | { kind: "disabled" }
   | { kind: "error"; message: string };
 
-async function fetchAdmin<T>(path: string): Promise<AdminApiResult<T>> {
+/**
+ * /admin/datasets(2026 전용)와 /admin/multiyear-datasets(다년도)가 공유하는 fetch 헬퍼.
+ * 둘 다 같은 festival.admin-ui.enabled 플래그로 켜고 끄므로 404 처리 규칙이 동일하다.
+ */
+export async function fetchAdmin<T>(path: string): Promise<AdminApiResult<T>> {
   try {
     const res = await fetch(`${API_BASE_URL}${path}`, { cache: "no-store" });
 

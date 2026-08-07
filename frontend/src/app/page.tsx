@@ -57,12 +57,20 @@ export default function Home() {
 
       <section className="rounded border border-gray-300 p-4">
         <h2 className="mb-2 text-lg font-semibold">관리자 도구</h2>
-        <Link
-          href="/admin/datasets"
-          className="text-sm text-blue-600 underline underline-offset-2"
-        >
-          축제 데이터 Import 검증 화면 (/admin/datasets)
-        </Link>
+        <div className="flex flex-col gap-2">
+          <Link
+            href="/admin/datasets"
+            className="text-sm text-blue-600 underline underline-offset-2"
+          >
+            축제 데이터 Import 검증 화면 (/admin/datasets)
+          </Link>
+          <Link
+            href="/admin/multiyear-datasets"
+            className="text-sm text-blue-600 underline underline-offset-2"
+          >
+            다년도(2017~2026) 데이터 검증 화면 (/admin/multiyear-datasets)
+          </Link>
+        </div>
       </section>
 
       <section className="rounded border border-gray-300 p-4">

@@ -44,6 +44,20 @@ export function formatKrwExact(amount: number | null | undefined): string {
   return `${Math.round(amount).toLocaleString("ko-KR")}원`;
 }
 
+/**
+ * 백만원 단위 숫자(다년도 CSV/DB 원본 단위)를 원 단위 압축 표기로 변환한다.
+ * DB/API는 항상 백만원 단위를 그대로 유지하고, 화면 표시에서만 이 함수를 거친다.
+ * 예: 204.5 -> "2억 450만원"
+ */
+export function formatMillionKrwCompact(
+  million: number | null | undefined,
+): string {
+  if (million === null || million === undefined || Number.isNaN(million)) {
+    return "-";
+  }
+  return formatKrwCompact(million * 1_000_000);
+}
+
 export function formatNumber(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "-";

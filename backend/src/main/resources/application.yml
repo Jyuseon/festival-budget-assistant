@@ -40,6 +40,16 @@ management:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+# festivalSeries 연결 분석 CLI (FestivalSeriesLinkingRunner)
+# MultiYearCsvImportRunner로 이미 적재된 multi_year_festival_record를 대상으로 동일 축제의
+# 연도별 반복을 찾아 festival_series/festival_series_membership에 채운다. 순수 분석 단계이며
+# 기존 2026 production BudgetEstimator/confidence와는 연결되어 있지 않다.
+#
+# analysis.series-linking.run          : true일 때만 실행 (기본값 false)
+# analysis.series-linking.report-path  : 리포트 텍스트 파일 경로 (기본값 multiyear-series-linking-report.txt)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # 관리자 데이터 검증 API/화면 (AdminDatasetController, /admin/datasets)
 # 기본값은 false - 이 컨트롤러는 로컬 개발 환경에서만 켠다(application-local.yml 참고).
 # 운영 환경에서는 절대 true로 두지 않는다. 쓰기/업로드 API는 없고 전부 읽기 전용이다.
