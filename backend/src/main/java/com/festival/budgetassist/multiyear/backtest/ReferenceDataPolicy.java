@@ -15,7 +15,7 @@ public enum ReferenceDataPolicy {
 
     /**
      * referenceYear &lt;= planningYear. planningYear 자체의 데이터셋이 이미 "공개 완료"
-     * ({@link MultiYearDatasetPublicationStatusValue#PUBLISHED_COMPLETE})인 경우에만 유효하다 -
+     * ({@link MultiYearDatasetPublicationStatusValue#PUBLISHED_PLAN_COMPLETE})인 경우에만 유효하다 -
      * 그렇지 않으면 {@link MultiYearBacktestService#estimateForPlanning}이 자동으로
      * {@link #HISTORICAL_ONLY}로 낮춰 적용하고, 응답의 {@code appliedReferenceDataPolicy}에 그
      * 사실을 그대로 드러낸다(요청한 정책을 조용히 다른 정책으로 바꿔치기하지 않는다).

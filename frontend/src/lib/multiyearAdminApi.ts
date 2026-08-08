@@ -1,4 +1,4 @@
-import { fetchAdmin, type CategoryCount } from "./adminApi";
+import { fetchAdmin, putAdmin, type CategoryCount } from "./adminApi";
 
 /**
  * /admin/multiyear-datasets 전용 API 클라이언트. 기존 2026 전용 /admin/datasets
@@ -97,6 +97,24 @@ export interface MultiYearAdminSampleResponse {
   rows: MultiYearSampleRow[];
 }
 
+/**
+ * 연도별 "다년도 개최계획 데이터셋 공개 완성" 상태. {@code PUBLISHED_PLAN_COMPLETE}는 "그 해
+ * 축제가 전부 끝났다"는 뜻이 아니라 "그 해 개최계획 데이터셋 원본이 공개 기준으로 완성되어
+ * planning reference로 쓸 수 있다"는 뜻이다 - 관리자가 판단해 직접 표시한다.
+ */
+export type MultiYearDatasetPublicationStatusValue = "PARTIAL" | "PUBLISHED_PLAN_COMPLETE";
+
+export interface MultiYearAdminPublicationStatusEntry {
+  datasetYear: number;
+  status: MultiYearDatasetPublicationStatusValue;
+  publishedAt: string | null;
+  recordCount: number;
+}
+
+export interface MultiYearAdminPublicationStatusResponse {
+  years: MultiYearAdminPublicationStatusEntry[];
+}
+
 const BASE = "/api/v1/admin/multiyear-datasets";
 
 export const fetchMultiYearSummary = () =>
@@ -118,3 +136,12 @@ export const fetchMultiYearSample = (
   fetchAdmin<MultiYearAdminSampleResponse>(
     `${BASE}/years/${year}/sample?limit=${limit}&offset=${offset}`,
   );
+
+export const fetchMultiYearPublicationStatus = () =>
+  fetchAdmin<MultiYearAdminPublicationStatusResponse>(`${BASE}/publication-status`);
+
+export const setMultiYearPublicationStatus = (
+  year: number,
+  status: MultiYearDatasetPublicationStatusValue,
+) =>
+  putAdmin<MultiYearAdminPublicationStatusEntry>(`${BASE}/publication-status/${year}`, { status });

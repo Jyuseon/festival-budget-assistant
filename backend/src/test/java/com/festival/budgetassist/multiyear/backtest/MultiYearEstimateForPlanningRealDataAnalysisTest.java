@@ -82,11 +82,11 @@ class MultiYearEstimateForPlanningRealDataAnalysisTest {
                 backtestService.estimateForPlanning(Region.GANGWON, null, Set.of(FestivalType.COMMUNITY), VenueType.OTHER, 10,
                         2026, ReferenceDataPolicy.INCLUDE_PUBLISHED_SAME_YEAR, all));
 
-        // 예시 4: 2026 dataset을 PUBLISHED_COMPLETE로 표시한 뒤 다시 INCLUDE_PUBLISHED_SAME_YEAR -> 2017~2026
+        // 예시 4: 2026 dataset을 PUBLISHED_PLAN_COMPLETE로 표시한 뒤 다시 INCLUDE_PUBLISHED_SAME_YEAR -> 2017~2026
         publicationStatusRepository.save(MultiYearDatasetPublicationStatus.builder()
-                .datasetYear(2026).status(MultiYearDatasetPublicationStatusValue.PUBLISHED_COMPLETE).publishedAt(Instant.now())
+                .datasetYear(2026).status(MultiYearDatasetPublicationStatusValue.PUBLISHED_PLAN_COMPLETE).publishedAt(Instant.now())
                 .build());
-        appendExample(lines, "2026 planning / INCLUDE_PUBLISHED_SAME_YEAR, PUBLISHED_COMPLETE로 표시 후 (2017~2026 포함)",
+        appendExample(lines, "2026 planning / INCLUDE_PUBLISHED_SAME_YEAR, PUBLISHED_PLAN_COMPLETE로 표시 후 (2017~2026 포함)",
                 backtestService.estimateForPlanning(Region.GANGWON, null, Set.of(FestivalType.COMMUNITY), VenueType.OTHER, 10,
                         2026, ReferenceDataPolicy.INCLUDE_PUBLISHED_SAME_YEAR, all));
 

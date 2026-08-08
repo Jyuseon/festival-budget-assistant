@@ -88,7 +88,7 @@ class MultiYearEstimateForPlanningTest extends MultiYearBacktestTestSupport {
                     BudgetQualityFlag.VALID);
         }
         publicationStatusRepository.save(MultiYearDatasetPublicationStatus.builder()
-                .datasetYear(2026).status(MultiYearDatasetPublicationStatusValue.PUBLISHED_COMPLETE).publishedAt(Instant.now())
+                .datasetYear(2026).status(MultiYearDatasetPublicationStatusValue.PUBLISHED_PLAN_COMPLETE).publishedAt(Instant.now())
                 .build());
 
         List<MultiYearFestivalRecord> all = recordRepository.findAll();
@@ -98,7 +98,7 @@ class MultiYearEstimateForPlanningTest extends MultiYearBacktestTestSupport {
 
         assertEquals(ReferenceDataPolicy.INCLUDE_PUBLISHED_SAME_YEAR, result.requestedReferenceDataPolicy());
         assertEquals(ReferenceDataPolicy.INCLUDE_PUBLISHED_SAME_YEAR, result.appliedReferenceDataPolicy(),
-                "PUBLISHED_COMPLETE로 표시된 연도는 요청한 정책 그대로 적용돼야 함");
+                "PUBLISHED_PLAN_COMPLETE로 표시된 연도는 요청한 정책 그대로 적용돼야 함");
         assertEquals(2026, result.referenceYearTo());
         assertEquals(2026, result.latestSourceYear(), "2026 데이터가 표본에 포함돼야 함(동년 벤치마크)");
     }
@@ -164,6 +164,37 @@ class MultiYearEstimateForPlanningTest extends MultiYearBacktestTestSupport {
         assertEquals(before2028Added.estimatedBudgetKrw(), after2028Added.estimatedBudgetKrw(),
                 "planningYear보다 미래인 record가 findAll()에 섞여 있어도 결과가 바뀌면 안 됨(leakage-safe)");
         assertTrue(after2028Added.latestSourceYear() <= 2026, "2028 record가 표본에 들어가면 안 됨");
+    }
+
+    @Test
+    void estimateForPlanning_usesCandidateSelectorV1_notV0_whenV0WouldConcentrateOnOneYear() {
+        // 2025: venue(GREEN)까지 정확히 일치하는 후보 25건 - V0라면 SAME_REGION_TYPE_VENUE 단계에서
+        // recommendedSampleCount(20)를 이미 넘겨 즉시 멈추고 2017~2020은 후보가 될 기회조차 없다.
+        for (int i = 1; i <= 25; i++) {
+            row(2025, i, "V1검증2025_" + i, Region.GYEONGGI, "이천시", "CULTURE_ART", VenueType.GREEN, 5, 100 + i,
+                    BudgetQualityFlag.VALID);
+        }
+        // 2017~2020: venue 정보 없는 옛 데이터 스타일(SAME_REGION_TYPE 단계에서만 매칭 가능) - V0는
+        // 절대 도달하지 못하지만, CandidateSelectorV1(V4 Hybrid)은 concentration이 높으면 여기까지 확장한다.
+        for (int y = 2017; y <= 2020; y++) {
+            for (int i = 1; i <= 5; i++) {
+                row(y, y * 100 + i, "V1검증구형" + y + "_" + i, Region.GYEONGGI, "이천시", "CULTURE_ART", 100 + i);
+            }
+        }
+
+        List<MultiYearFestivalRecord> all = recordRepository.findAll();
+
+        MultiYearPlanningEstimateResult v1Result = backtestService.estimateForPlanning(
+                Region.GYEONGGI, "이천시", Set.of(FestivalType.CULTURE_ART), VenueType.GREEN, 5,
+                2026, ReferenceDataPolicy.HISTORICAL_ONLY, all);
+
+        List<MultiYearFestivalRecord> trainingOnly = recordRepository.findByDatasetYearLessThan(2026);
+        MultiYearPredictionResult v0Result = backtestService.predictForQuery(
+                Region.GYEONGGI, "이천시", Set.of(FestivalType.CULTURE_ART), VenueType.GREEN, 5, trainingOnly);
+
+        assertEquals(1, v0Result.distinctYearsUsed(), "V0(predictForQuery)는 여전히 2025 단일연도에 쏠려야 함(비교 기준)");
+        assertTrue(v1Result.distinctYearsUsed() > 1,
+                "estimateForPlanning(CandidateSelectorV1)은 V0와 달리 2017~2020 후보까지 포함해 연도가 다양해야 함");
     }
 
     @Test

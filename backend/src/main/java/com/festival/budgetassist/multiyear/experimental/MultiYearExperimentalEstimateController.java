@@ -2,6 +2,7 @@ package com.festival.budgetassist.multiyear.experimental;
 
 import jakarta.validation.Valid;
 
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -23,5 +24,11 @@ class MultiYearExperimentalEstimateController {
     @PostMapping("/api/v1/experimental/multiyear-budget-estimates")
     public MultiYearExperimentalEstimateResponse estimate(@Valid @RequestBody MultiYearExperimentalEstimateRequest request) {
         return service.estimate(request);
+    }
+
+    /** planningYear 선택지 등 UI 구성용 메타데이터 - 연도 상수를 프론트엔드에 하드코딩하지 않기 위함. */
+    @GetMapping("/api/v1/experimental/multiyear-planning-metadata")
+    public MultiYearPlanningMetadataResponse planningMetadata() {
+        return service.planningMetadata();
     }
 }

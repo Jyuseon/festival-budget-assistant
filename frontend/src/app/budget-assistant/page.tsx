@@ -8,12 +8,18 @@ import {
   type MetadataResponse,
   type BudgetEstimateResponse,
 } from "@/lib/estimateApi";
-import { postMultiYearExperimentalEstimate } from "@/lib/multiyearExperimentalApi";
+import {
+  postMultiYearExperimentalEstimate,
+  fetchMultiYearPlanningMetadata,
+  type MultiYearPlanningMetadataResponse,
+  type ReferenceDataPolicy,
+} from "@/lib/multiyearExperimentalApi";
 import { EstimateForm, type EstimateFormValues } from "@/components/estimate/EstimateForm";
 import { EstimateResultCards } from "@/components/estimate/EstimateResultCards";
 import { SimilarFestivalsTable } from "@/components/estimate/SimilarFestivalsTable";
 import { CalculationTracePanel } from "@/components/estimate/CalculationTracePanel";
 import { MultiYearExperimentalSection, type MultiYearState } from "@/components/estimate/MultiYearExperimentalSection";
+import { PlanningYearControls } from "@/components/estimate/PlanningYearControls";
 
 type MetadataState =
   | { kind: "loading" }
@@ -37,6 +43,30 @@ export default function BudgetAssistantPage() {
   });
   const [estimateState, setEstimateState] = useState<EstimateState>({ kind: "idle" });
   const [multiYearState, setMultiYearState] = useState<MultiYearState>({ kind: "idle" });
+  const [planningMetadata, setPlanningMetadata] = useState<MultiYearPlanningMetadataResponse | null>(null);
+  const [planningYear, setPlanningYear] = useState<number | null>(null);
+  const [referenceDataPolicy, setReferenceDataPolicy] = useState<ReferenceDataPolicy>("HISTORICAL_ONLY");
+
+  // 다년도 계획예산 분석 전용 메타데이터 - production 메타데이터(fetchMetadata)와 완전히
+  // 독립된 요청이다(한쪽이 실패해도 다른 쪽에 영향 없음). 실패해도 기획연도 선택 UI만 안 보일 뿐,
+  // 나머지 화면은 정상 동작한다.
+  useEffect(() => {
+    let cancelled = false;
+    fetchMultiYearPlanningMetadata()
+      .then((data) => {
+        if (cancelled) return;
+        setPlanningMetadata(data);
+        if (data.defaultPlanningYear !== null) {
+          setPlanningYear(data.defaultPlanningYear);
+        }
+      })
+      .catch(() => {
+        // 다년도 계획연도 메타데이터는 부가 기능 - 실패해도 조용히 무시(기획연도 선택 UI만 숨김).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +118,10 @@ export default function BudgetAssistantPage() {
         setEstimateState({ kind: "error", message });
       });
 
-    void postMultiYearExperimentalEstimate(requestBody)
+    void postMultiYearExperimentalEstimate(
+      requestBody,
+      planningYear !== null ? { planningYear, referenceDataPolicy } : undefined,
+    )
       .then((data) => setMultiYearState({ kind: "ok", data }))
       .catch((err: unknown) => {
         const message =
@@ -139,6 +172,16 @@ export default function BudgetAssistantPage() {
             submitting={estimateState.kind === "loading"}
           />
 
+          {planningMetadata && planningYear !== null && planningMetadata.availablePlanningYears.length > 0 && (
+            <PlanningYearControls
+              metadata={planningMetadata}
+              planningYear={planningYear}
+              referenceDataPolicy={referenceDataPolicy}
+              onPlanningYearChange={setPlanningYear}
+              onReferenceDataPolicyChange={setReferenceDataPolicy}
+            />
+          )}
+
           {estimateState.kind !== "idle" && (
             <div className="flex items-center gap-3 text-xs font-semibold text-gray-400">
               <span className="h-px flex-1 bg-gray-300" />
@@ -177,7 +220,11 @@ export default function BudgetAssistantPage() {
             <>
               <div className="mt-2 flex items-center gap-3 text-xs font-semibold text-purple-400">
                 <span className="h-px flex-1 bg-purple-200" />
-                <span>다년도 실험 분석 · 2017~2025 → 2026</span>
+                <span>
+                  다년도 계획예산 분석
+                  {multiYearState.kind === "ok" &&
+                    ` · ${multiYearState.data.trainingYearFrom}~${multiYearState.data.trainingYearTo} → ${multiYearState.data.targetYear}`}
+                </span>
                 <span className="h-px flex-1 bg-purple-200" />
               </div>
               <MultiYearExperimentalSection

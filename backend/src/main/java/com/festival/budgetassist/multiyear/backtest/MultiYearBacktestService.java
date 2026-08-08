@@ -274,7 +274,7 @@ public class MultiYearBacktestService {
 
     /**
      * {@code INCLUDE_PUBLISHED_SAME_YEAR}를 요청해도 해당 planningYear의 {@link
-     * MultiYearDatasetPublicationStatus}가 {@code PUBLISHED_COMPLETE}로 표시돼 있지 않으면
+     * MultiYearDatasetPublicationStatus}가 {@code PUBLISHED_PLAN_COMPLETE}로 표시돼 있지 않으면
      * {@code HISTORICAL_ONLY}로 낮춰 적용한다(9절: "같은 연도 데이터를 무조건 포함하면 안 된다").
      * 행이 아예 없는 연도는 PARTIAL과 동일하게 취급한다(안전한 기본값).
      */
@@ -284,7 +284,7 @@ public class MultiYearBacktestService {
         }
         Optional<MultiYearDatasetPublicationStatus> status = publicationStatusRepository.findByDatasetYear(planningYear);
         boolean publishedComplete = status.isPresent()
-                && status.get().getStatus() == MultiYearDatasetPublicationStatusValue.PUBLISHED_COMPLETE;
+                && status.get().getStatus() == MultiYearDatasetPublicationStatusValue.PUBLISHED_PLAN_COMPLETE;
         return publishedComplete ? ReferenceDataPolicy.INCLUDE_PUBLISHED_SAME_YEAR : ReferenceDataPolicy.HISTORICAL_ONLY;
     }
 

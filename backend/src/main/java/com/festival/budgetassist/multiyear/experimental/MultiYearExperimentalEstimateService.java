@@ -14,7 +14,10 @@ import com.festival.budgetassist.multiyear.backtest.MultiYearPlanningYearWeightS
 import com.festival.budgetassist.multiyear.backtest.MultiYearPredictionCandidate;
 import com.festival.budgetassist.multiyear.backtest.MultiYearPredictionResult;
 import com.festival.budgetassist.multiyear.backtest.ReferenceDataPolicy;
+import com.festival.budgetassist.multiyear.domain.MultiYearDatasetPublicationStatus;
+import com.festival.budgetassist.multiyear.domain.MultiYearDatasetPublicationStatusValue;
 import com.festival.budgetassist.multiyear.domain.MultiYearFestivalRecord;
+import com.festival.budgetassist.multiyear.repository.MultiYearDatasetPublicationStatusRepository;
 import com.festival.budgetassist.multiyear.repository.MultiYearFestivalRecordRepository;
 
 /**
@@ -39,15 +42,37 @@ import com.festival.budgetassist.multiyear.repository.MultiYearFestivalRecordRep
 public class MultiYearExperimentalEstimateService {
 
     private static final String MODEL_BASELINE_S0 = "MULTIYEAR_BASELINE_S0";
-    private static final String MODEL_CANDIDATE_SELECTOR_V1 = "MULTIYEAR_CANDIDATE_SELECTOR_V1";
+    private static final String MODEL_CANDIDATE_SELECTOR_V1 = "MULTIYEAR_PLANNING_V1";
 
     private final MultiYearFestivalRecordRepository recordRepository;
     private final MultiYearBacktestService backtestService;
+    private final MultiYearDatasetPublicationStatusRepository publicationStatusRepository;
 
     MultiYearExperimentalEstimateService(MultiYearFestivalRecordRepository recordRepository,
-                                          MultiYearBacktestService backtestService) {
+                                          MultiYearBacktestService backtestService,
+                                          MultiYearDatasetPublicationStatusRepository publicationStatusRepository) {
         this.recordRepository = recordRepository;
         this.backtestService = backtestService;
+        this.publicationStatusRepository = publicationStatusRepository;
+    }
+
+    /**
+     * {@code /budget-assistant} 다년도 계획예산 분석 UI가 "기획연도" 선택지를 채우는 데 쓰는
+     * 메타데이터 - planningYear 상수를 하드코딩하지 않고 DB의 최신 datasetYear를 기준으로
+     * 계산한다(사용자 요청). 데이터가 아예 없으면 빈 목록을 반환한다.
+     */
+    public MultiYearPlanningMetadataResponse planningMetadata() {
+        Integer maxDatasetYear = recordRepository.findMaxDatasetYear();
+        if (maxDatasetYear == null) {
+            return new MultiYearPlanningMetadataResponse(List.of(), null, List.of());
+        }
+        List<Integer> availableYears = List.of(maxDatasetYear, maxDatasetYear + 1);
+        List<Integer> publishedYears = publicationStatusRepository.findAll().stream()
+                .filter(s -> s.getStatus() == MultiYearDatasetPublicationStatusValue.PUBLISHED_PLAN_COMPLETE)
+                .map(MultiYearDatasetPublicationStatus::getDatasetYear)
+                .sorted()
+                .toList();
+        return new MultiYearPlanningMetadataResponse(availableYears, maxDatasetYear, publishedYears);
     }
 
     public MultiYearExperimentalEstimateResponse estimate(MultiYearExperimentalEstimateRequest request) {

@@ -28,7 +28,7 @@ import lombok.Setter;
  * 명시적으로 관리한다.</p>
  *
  * <p>외부 공개 API 자동 확인 기능은 이번 범위에 없다 - 운영자가 수동으로 {@link
- * MultiYearDatasetPublicationStatusValue#PUBLISHED_COMPLETE}로 표시해야 한다. 행이 아예 없는
+ * MultiYearDatasetPublicationStatusValue#PUBLISHED_PLAN_COMPLETE}로 표시해야 한다. 행이 아예 없는
  * 연도는 {@link com.festival.budgetassist.multiyear.backtest.MultiYearBacktestService}가
  * {@code PARTIAL}과 동일하게(=same-year reference 불가) 취급한다(안전한 기본값).</p>
  */
@@ -52,7 +52,7 @@ public class MultiYearDatasetPublicationStatus {
     @Column(name = "status", nullable = false, length = 20)
     private MultiYearDatasetPublicationStatusValue status;
 
-    /** status가 PUBLISHED_COMPLETE로 바뀐 시각(운영자가 표시한 시각). PARTIAL이면 null. */
+    /** status가 PUBLISHED_PLAN_COMPLETE로 바뀐 시각(운영자가 표시한 시각). PARTIAL이면 null. */
     @Column(name = "published_at")
     private Instant publishedAt;
 }

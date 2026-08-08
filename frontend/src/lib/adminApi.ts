@@ -138,6 +138,31 @@ export async function fetchAdmin<T>(path: string): Promise<AdminApiResult<T>> {
   }
 }
 
+/** GET 전용 fetchAdmin과 짝을 이루는 PUT 헬퍼 - 관리자 전용 쓰기 endpoint(예: 다년도 publication status 설정)에 쓴다. */
+export async function putAdmin<T>(path: string, body: unknown): Promise<AdminApiResult<T>> {
+  try {
+    const res = await fetch(`${API_BASE_URL}${path}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    if (res.status === 404) {
+      return { kind: "disabled" };
+    }
+    if (!res.ok) {
+      return { kind: "error", message: `HTTP ${res.status}` };
+    }
+    const data = (await res.json()) as T;
+    return { kind: "ok", data };
+  } catch (err) {
+    return {
+      kind: "error",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export const fetchOverview = () =>
   fetchAdmin<AdminDatasetOverviewResponse>("/api/v1/admin/datasets/latest");
 

@@ -43,4 +43,16 @@ public interface MultiYearFestivalRecordRepository extends JpaRepository<MultiYe
      * 상한선일 뿐, leakage 방지의 최종 방어선이 아니다).
      */
     List<MultiYearFestivalRecord> findByDatasetYearLessThanEqual(Integer year);
+
+    /**
+     * 현재 DB에 존재하는 가장 최신 datasetYear - "선택 가능한 planningYear 목록"을 연도 상수를
+     * 하드코딩하지 않고 계산하기 위한 유일한 근거다({@code MultiYearExperimentalEstimateService}
+     * 참고: {@code [maxDatasetYear, maxDatasetYear + 1]}). 데이터가 아예 없으면 null.
+     */
+    @Query("select max(r.datasetYear) from MultiYearFestivalRecord r")
+    Integer findMaxDatasetYear();
+
+    /** 관리자 publication status 화면용 - 실제 데이터가 존재하는 연도만 오름차순으로. */
+    @Query("select distinct r.datasetYear from MultiYearFestivalRecord r order by r.datasetYear")
+    List<Integer> findDistinctDatasetYears();
 }

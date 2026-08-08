@@ -6,10 +6,12 @@ import {
   fetchMultiYearYearDetail,
   fetchMultiYearDistributions,
   fetchMultiYearSample,
+  fetchMultiYearPublicationStatus,
   type MultiYearAdminSummaryResponse,
   type MultiYearAdminYearDetailResponse,
   type MultiYearAdminDistributionsResponse,
   type MultiYearAdminSampleResponse,
+  type MultiYearAdminPublicationStatusEntry,
 } from "@/lib/multiyearAdminApi";
 import { YearFilterBar, type YearFilter } from "@/components/admin-multiyear/YearFilterBar";
 import { YearComparisonTable } from "@/components/admin-multiyear/YearComparisonTable";
@@ -17,6 +19,7 @@ import { SeriesStatusCard } from "@/components/admin-multiyear/SeriesStatusCard"
 import { QualityCards, BudgetStatisticsPanel } from "@/components/admin-multiyear/QualityCards";
 import { DistributionPanels } from "@/components/admin-multiyear/DistributionPanels";
 import { SampleTable } from "@/components/admin-multiyear/SampleTable";
+import { PublicationStatusPanel } from "@/components/admin-multiyear/PublicationStatusPanel";
 
 const SAMPLE_PAGE_SIZE = 20;
 
@@ -48,6 +51,7 @@ export default function MultiYearDatasetsPage() {
   const [yearDetailState, setYearDetailState] = useState<YearDetailState>({ phase: "idle" });
   const [sampleOffset, setSampleOffset] = useState(0);
   const [sampleState, setSampleState] = useState<SampleState>({ phase: "idle" });
+  const [publicationStatusEntries, setPublicationStatusEntries] = useState<MultiYearAdminPublicationStatusEntry[] | null>(null);
 
   // 최초 1회: 전체 연도 요약 로드
   useEffect(() => {
@@ -66,6 +70,26 @@ export default function MultiYearDatasetsPage() {
       cancelled = true;
     };
   }, []);
+
+  // publication status는 요약과 완전히 독립된 요청이다(한쪽 실패가 다른 쪽 렌더링에 영향 없음).
+  useEffect(() => {
+    let cancelled = false;
+    fetchMultiYearPublicationStatus().then((res) => {
+      if (cancelled) return;
+      if (res.kind === "ok") {
+        setPublicationStatusEntries(res.data.years);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function handlePublicationStatusChanged(updated: MultiYearAdminPublicationStatusEntry) {
+    setPublicationStatusEntries((prev) =>
+      (prev ?? []).map((e) => (e.datasetYear === updated.datasetYear ? updated : e)),
+    );
+  }
 
   // 연도 선택이 바뀌면 상세/분포를 다시 불러온다. "loading"으로의 전환은 선택 이벤트 핸들러
   // (handleSelectYear)에서 이미 동기적으로 해두므로, 이 effect는 순수하게 비동기 fetch와 그
@@ -181,6 +205,10 @@ export default function MultiYearDatasetsPage() {
         <>
           <YearComparisonTable years={summaryState.data.years} />
           <SeriesStatusCard status={summaryState.data.seriesStatus} />
+
+          {publicationStatusEntries && (
+            <PublicationStatusPanel entries={publicationStatusEntries} onChanged={handlePublicationStatusChanged} />
+          )}
 
           <div>
             <h2 className="mb-2 text-sm font-semibold text-gray-700">연도 선택</h2>

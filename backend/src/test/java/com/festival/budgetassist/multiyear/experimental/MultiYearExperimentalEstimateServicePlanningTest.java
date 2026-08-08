@@ -98,7 +98,7 @@ class MultiYearExperimentalEstimateServicePlanningTest {
                 new MultiYearExperimentalEstimateRequest("GYEONGGI", "이천시", "CULTURE_ART", "GREEN", 5,
                         2027, "HISTORICAL_ONLY"));
 
-        assertEquals("MULTIYEAR_CANDIDATE_SELECTOR_V1", response.model());
+        assertEquals("MULTIYEAR_PLANNING_V1", response.model());
         assertEquals(2027, response.targetYear());
         assertEquals(2017, response.trainingYearFrom());
         assertEquals(2026, response.trainingYearTo(), "2027 기획은 2017~2026 전체(10개년)를 참고해야 함");
@@ -110,7 +110,7 @@ class MultiYearExperimentalEstimateServicePlanningTest {
     @Test
     void estimate_planningYear2026_includePublishedSameYear_whenPublished_includes2026() {
         publicationStatusRepository.save(MultiYearDatasetPublicationStatus.builder()
-                .datasetYear(2026).status(MultiYearDatasetPublicationStatusValue.PUBLISHED_COMPLETE).publishedAt(Instant.now())
+                .datasetYear(2026).status(MultiYearDatasetPublicationStatusValue.PUBLISHED_PLAN_COMPLETE).publishedAt(Instant.now())
                 .build());
 
         MultiYearExperimentalEstimateResponse response = service.estimate(
