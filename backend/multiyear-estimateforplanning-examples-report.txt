@@ -1,0 +1,62 @@
+================ estimateForPlanning 실데이터 예시 ================
+
+---- 2027 planning / HISTORICAL_ONLY (2017~2026 전체 참고) ----
+planningYear=2027 requested=HISTORICAL_ONLY applied=HISTORICAL_ONLY referenceYear=2017~2026
+estimatedBudgetKrw=67,007,748 weightedAverage=157,877,038 p25=34,284,646 p75=256,214,997 sampleCount=50
+distinctYearsUsed=9 effectiveYearCount=6.62 earliestSourceYear=2017 latestSourceYear=2026 fallbackLevel=SAME_REGION_TYPE
+yearWeightBreakdown:
+  2023 -> 9건 / 20.3%
+  2026 -> 11건 / 18.9%
+  2024 -> 8건 / 18.0%
+  2025 -> 9건 / 13.3%
+  2022 -> 5건 / 11.3%
+  2020 -> 4건 / 9.1%
+  2021 -> 2건 / 4.5%
+  2017 -> 1건 / 2.3%
+  2019 -> 1건 / 2.3%
+
+---- 2026 planning / HISTORICAL_ONLY (2017~2025) ----
+planningYear=2026 requested=HISTORICAL_ONLY applied=HISTORICAL_ONLY referenceYear=2017~2025
+estimatedBudgetKrw=80,012,200 weightedAverage=186,929,695 p25=28,996,708 p75=423,806,448 sampleCount=50
+distinctYearsUsed=9 effectiveYearCount=7.42 earliestSourceYear=2017 latestSourceYear=2025 fallbackLevel=SAME_REGION_TYPE
+yearWeightBreakdown:
+  2023 -> 9건 / 19.5%
+  2024 -> 8건 / 17.3%
+  2020 -> 7건 / 13.8%
+  2021 -> 7건 / 12.8%
+  2022 -> 5건 / 10.8%
+  2018 -> 5건 / 9.0%
+  2019 -> 4건 / 7.6%
+  2017 -> 4건 / 7.3%
+  2025 -> 1건 / 1.8%
+
+---- 2026 planning / INCLUDE_PUBLISHED_SAME_YEAR, 공개상태 미표시 (자동 다운그레이드) ----
+planningYear=2026 requested=INCLUDE_PUBLISHED_SAME_YEAR applied=HISTORICAL_ONLY referenceYear=2017~2025
+estimatedBudgetKrw=80,012,200 weightedAverage=186,929,695 p25=28,996,708 p75=423,806,448 sampleCount=50
+distinctYearsUsed=9 effectiveYearCount=7.42 earliestSourceYear=2017 latestSourceYear=2025 fallbackLevel=SAME_REGION_TYPE
+yearWeightBreakdown:
+  2023 -> 9건 / 19.5%
+  2024 -> 8건 / 17.3%
+  2020 -> 7건 / 13.8%
+  2021 -> 7건 / 12.8%
+  2022 -> 5건 / 10.8%
+  2018 -> 5건 / 9.0%
+  2019 -> 4건 / 7.6%
+  2017 -> 4건 / 7.3%
+  2025 -> 1건 / 1.8%
+
+---- 2026 planning / INCLUDE_PUBLISHED_SAME_YEAR, PUBLISHED_COMPLETE로 표시 후 (2017~2026 포함) ----
+planningYear=2026 requested=INCLUDE_PUBLISHED_SAME_YEAR applied=INCLUDE_PUBLISHED_SAME_YEAR referenceYear=2017~2026
+estimatedBudgetKrw=67,007,748 weightedAverage=157,877,038 p25=34,284,646 p75=256,214,997 sampleCount=50
+distinctYearsUsed=9 effectiveYearCount=6.62 earliestSourceYear=2017 latestSourceYear=2026 fallbackLevel=SAME_REGION_TYPE
+yearWeightBreakdown:
+  2023 -> 9건 / 20.3%
+  2026 -> 11건 / 18.9%
+  2024 -> 8건 / 18.0%
+  2025 -> 9건 / 13.3%
+  2022 -> 5건 / 11.3%
+  2020 -> 4건 / 9.1%
+  2021 -> 2건 / 4.5%
+  2017 -> 1건 / 2.3%
+  2019 -> 1건 / 2.3%
+
