@@ -26,7 +26,7 @@ import com.festival.budgetassist.multiyear.domain.MultiYearFestivalRecord;
  * </ol>
  */
 @Component
-class MultiYearCandidateSelector {
+class MultiYearCandidateSelector implements MultiYearCandidateSelectionStrategy {
 
     private final AlgorithmConfig config;
 
@@ -34,7 +34,8 @@ class MultiYearCandidateSelector {
         this.config = config;
     }
 
-    MultiYearCandidateSelectionResult select(List<MultiYearFestivalRecord> trainingPool, MultiYearBacktestQuery target) {
+    @Override
+    public MultiYearCandidateSelectionResult select(List<MultiYearFestivalRecord> trainingPool, MultiYearBacktestQuery target) {
         boolean hasDistrict = target.district() != null;
         boolean hasVenue = target.venueType() != null;
 

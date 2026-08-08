@@ -8,10 +8,12 @@ import {
   type MetadataResponse,
   type BudgetEstimateResponse,
 } from "@/lib/estimateApi";
+import { postMultiYearExperimentalEstimate } from "@/lib/multiyearExperimentalApi";
 import { EstimateForm, type EstimateFormValues } from "@/components/estimate/EstimateForm";
 import { EstimateResultCards } from "@/components/estimate/EstimateResultCards";
 import { SimilarFestivalsTable } from "@/components/estimate/SimilarFestivalsTable";
 import { CalculationTracePanel } from "@/components/estimate/CalculationTracePanel";
+import { MultiYearExperimentalSection, type MultiYearState } from "@/components/estimate/MultiYearExperimentalSection";
 
 type MetadataState =
   | { kind: "loading" }
@@ -34,6 +36,7 @@ export default function BudgetAssistantPage() {
     durationDays: 3,
   });
   const [estimateState, setEstimateState] = useState<EstimateState>({ kind: "idle" });
+  const [multiYearState, setMultiYearState] = useState<MultiYearState>({ kind: "idle" });
 
   useEffect(() => {
     let cancelled = false;
@@ -64,25 +67,34 @@ export default function BudgetAssistantPage() {
   }, []);
 
   async function handleSubmit() {
+    const requestBody = {
+      regionCode: form.regionCode,
+      district: form.district || null,
+      festivalType: form.festivalType,
+      venueType: form.venueType,
+      durationDays: Number(form.durationDays),
+    };
+
+    // production과 다년도 실험 두 요청은 서로 강하게 결합하지 않는다(지시사항 16절) - 각자
+    // 독립된 상태를 가지므로 한쪽이 실패해도 다른 쪽 렌더링에는 전혀 영향이 없다.
     setEstimateState({ kind: "loading" });
-    try {
-      const data = await postBudgetEstimate({
-        regionCode: form.regionCode,
-        district: form.district || null,
-        festivalType: form.festivalType,
-        venueType: form.venueType,
-        durationDays: Number(form.durationDays),
+    setMultiYearState({ kind: "loading" });
+
+    void postBudgetEstimate(requestBody)
+      .then((data) => setEstimateState({ kind: "ok", data }))
+      .catch((err: unknown) => {
+        const message =
+          err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
+        setEstimateState({ kind: "error", message });
       });
-      setEstimateState({ kind: "ok", data });
-    } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      setEstimateState({ kind: "error", message });
-    }
+
+    void postMultiYearExperimentalEstimate(requestBody)
+      .then((data) => setMultiYearState({ kind: "ok", data }))
+      .catch((err: unknown) => {
+        const message =
+          err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
+        setMultiYearState({ kind: "error", message });
+      });
   }
 
   return (
@@ -127,6 +139,14 @@ export default function BudgetAssistantPage() {
             submitting={estimateState.kind === "loading"}
           />
 
+          {estimateState.kind !== "idle" && (
+            <div className="flex items-center gap-3 text-xs font-semibold text-gray-400">
+              <span className="h-px flex-1 bg-gray-300" />
+              <span>기존 2026 기준 · 현재 서비스 계산</span>
+              <span className="h-px flex-1 bg-gray-300" />
+            </div>
+          )}
+
           {estimateState.kind === "loading" && (
             <div className="rounded border border-gray-300 p-6 text-sm text-gray-500">
               계산 중입니다...
@@ -151,6 +171,22 @@ export default function BudgetAssistantPage() {
                 />
               )}
             </div>
+          )}
+
+          {multiYearState.kind !== "idle" && (
+            <>
+              <div className="mt-2 flex items-center gap-3 text-xs font-semibold text-purple-400">
+                <span className="h-px flex-1 bg-purple-200" />
+                <span>다년도 실험 분석 · 2017~2025 → 2026</span>
+                <span className="h-px flex-1 bg-purple-200" />
+              </div>
+              <MultiYearExperimentalSection
+                state={multiYearState}
+                productionEstimatedBudgetKrw={
+                  estimateState.kind === "ok" ? estimateState.data.estimatedBudgetKrw : null
+                }
+              />
+            </>
           )}
         </>
       )}

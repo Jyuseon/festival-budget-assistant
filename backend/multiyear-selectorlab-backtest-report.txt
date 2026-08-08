@@ -1,0 +1,99 @@
+================ Selector 후보 leakage-safe backtest 비교 (V0 vs V1 vs V4) ================
+CPI/series correction/recency/COVID 전부 OFF (13절) - selector 자체의 영향만 분리
+
+========== fold: Primary: train<=2024 -> test 2025 ==========
+  [V0_CURRENT] evalTargets=1193, noFinalSample=0, 평가 1193건
+    MAE=405,765,515  MedianAE=129,246,334  MdAPE=65.0%  P75APE=93.0%  P90APE=279.6%  MedianALE=0.775
+    within25%=19.0%  within50%=37.4%  0.5x~2x=45.6%  typicalRangeCoverage=47.8%
+    medianSignedLogError=-0.146 (양수=과대추정 경향)  medianPredicted/ActualRatio=0.864  medianRangeWidthRatio(P75/P25)=4.65
+    예산 규모별 breakdown (n, medianAPE, medianSignedLogError):
+      <= 100M    n= 425  medianAPE=133.7%  medianSignedLogError=0.849
+      100M~300M  n= 326  medianAPE=41.9%  medianSignedLogError=-0.110
+      300M~1B    n= 307  medianAPE=61.4%  medianSignedLogError=-0.953
+      1B~3B      n= 114  medianAPE=81.5%  medianSignedLogError=-1.685
+      > 3B       n=  21  medianAPE=93.8%  medianSignedLogError=-2.776
+  [V1_YEAR_CAP_50pct] evalTargets=1193, noFinalSample=0, 평가 1193건
+    MAE=405,765,515  MedianAE=129,246,334  MdAPE=65.0%  P75APE=93.0%  P90APE=279.6%  MedianALE=0.775
+    within25%=19.0%  within50%=37.4%  0.5x~2x=45.6%  typicalRangeCoverage=47.8%
+    medianSignedLogError=-0.146 (양수=과대추정 경향)  medianPredicted/ActualRatio=0.864  medianRangeWidthRatio(P75/P25)=4.65
+    예산 규모별 breakdown (n, medianAPE, medianSignedLogError):
+      <= 100M    n= 425  medianAPE=133.7%  medianSignedLogError=0.849
+      100M~300M  n= 326  medianAPE=41.9%  medianSignedLogError=-0.110
+      300M~1B    n= 307  medianAPE=61.4%  medianSignedLogError=-0.953
+      1B~3B      n= 114  medianAPE=81.5%  medianSignedLogError=-1.685
+      > 3B       n=  21  medianAPE=93.8%  medianSignedLogError=-2.776
+  [V4_HYBRID_cap50pct_loss0.10] evalTargets=1193, noFinalSample=0, 평가 1193건
+    MAE=405,765,515  MedianAE=129,246,334  MdAPE=65.0%  P75APE=93.0%  P90APE=279.6%  MedianALE=0.775
+    within25%=19.0%  within50%=37.4%  0.5x~2x=45.6%  typicalRangeCoverage=47.8%
+    medianSignedLogError=-0.146 (양수=과대추정 경향)  medianPredicted/ActualRatio=0.864  medianRangeWidthRatio(P75/P25)=4.65
+    예산 규모별 breakdown (n, medianAPE, medianSignedLogError):
+      <= 100M    n= 425  medianAPE=133.7%  medianSignedLogError=0.849
+      100M~300M  n= 326  medianAPE=41.9%  medianSignedLogError=-0.110
+      300M~1B    n= 307  medianAPE=61.4%  medianSignedLogError=-0.953
+      1B~3B      n= 114  medianAPE=81.5%  medianSignedLogError=-1.685
+      > 3B       n=  21  medianAPE=93.8%  medianSignedLogError=-2.776
+
+========== fold: Primary: train<=2025 -> test 2026 ==========
+  [V0_CURRENT] evalTargets=1238, noFinalSample=0, 평가 1238건
+    MAE=375,748,012  MedianAE=128,359,425  MdAPE=69.2%  P75APE=118.0%  P90APE=354.2%  MedianALE=0.814
+    within25%=15.2%  within50%=36.3%  0.5x~2x=43.5%  typicalRangeCoverage=49.8%
+    medianSignedLogError=-0.097 (양수=과대추정 경향)  medianPredicted/ActualRatio=0.908  medianRangeWidthRatio(P75/P25)=5.27
+    예산 규모별 breakdown (n, medianAPE, medianSignedLogError):
+      <= 100M    n= 423  medianAPE=198.5%  medianSignedLogError=1.094
+      100M~300M  n= 358  medianAPE=32.5%  medianSignedLogError=-0.057
+      300M~1B    n= 315  medianAPE=57.5%  medianSignedLogError=-0.856
+      1B~3B      n= 120  medianAPE=81.4%  medianSignedLogError=-1.682
+      > 3B       n=  22  medianAPE=92.4%  medianSignedLogError=-2.578
+  [V1_YEAR_CAP_50pct] evalTargets=1238, noFinalSample=0, 평가 1238건
+    MAE=374,743,191  MedianAE=123,506,333  MdAPE=65.3%  P75APE=94.0%  P90APE=303.9%  MedianALE=0.828
+    within25%=18.1%  within50%=37.2%  0.5x~2x=44.1%  typicalRangeCoverage=48.3%
+    medianSignedLogError=-0.175 (양수=과대추정 경향)  medianPredicted/ActualRatio=0.839  medianRangeWidthRatio(P75/P25)=4.64
+    예산 규모별 breakdown (n, medianAPE, medianSignedLogError):
+      <= 100M    n= 423  medianAPE=159.3%  medianSignedLogError=0.953
+      100M~300M  n= 358  medianAPE=37.6%  medianSignedLogError=-0.118
+      300M~1B    n= 315  medianAPE=60.1%  medianSignedLogError=-0.920
+      1B~3B      n= 120  medianAPE=81.7%  medianSignedLogError=-1.697
+      > 3B       n=  22  medianAPE=93.7%  medianSignedLogError=-2.764
+  [V4_HYBRID_cap50pct_loss0.10] evalTargets=1238, noFinalSample=0, 평가 1238건
+    MAE=374,201,642  MedianAE=123,219,460  MdAPE=65.2%  P75APE=93.7%  P90APE=289.9%  MedianALE=0.815
+    within25%=18.4%  within50%=37.4%  0.5x~2x=44.2%  typicalRangeCoverage=48.6%
+    medianSignedLogError=-0.186 (양수=과대추정 경향)  medianPredicted/ActualRatio=0.830  medianRangeWidthRatio(P75/P25)=4.62
+    예산 규모별 breakdown (n, medianAPE, medianSignedLogError):
+      <= 100M    n= 423  medianAPE=150.0%  medianSignedLogError=0.916
+      100M~300M  n= 358  medianAPE=37.0%  medianSignedLogError=-0.133
+      300M~1B    n= 315  medianAPE=61.2%  medianSignedLogError=-0.946
+      1B~3B      n= 120  medianAPE=81.9%  medianSignedLogError=-1.709
+      > 3B       n=  22  medianAPE=93.7%  medianSignedLogError=-2.764
+
+========== fold: Secondary: train<=2023 -> test 2024 (venueType 원본 대부분 없음) ==========
+  [V0_CURRENT] evalTargets=1001, noFinalSample=0, 평가 1001건
+    MAE=375,965,160  MedianAE=129,991,408  MdAPE=68.7%  P75APE=126.7%  P90APE=384.0%  MedianALE=0.815
+    within25%=16.4%  within50%=34.8%  0.5x~2x=42.4%  typicalRangeCoverage=49.5%
+    medianSignedLogError=-0.005 (양수=과대추정 경향)  medianPredicted/ActualRatio=0.995  medianRangeWidthRatio(P75/P25)=4.88
+    예산 규모별 breakdown (n, medianAPE, medianSignedLogError):
+      <= 100M    n= 359  medianAPE=182.9%  medianSignedLogError=1.040
+      100M~300M  n= 292  medianAPE=41.9%  medianSignedLogError=0.028
+      300M~1B    n= 247  medianAPE=54.9%  medianSignedLogError=-0.792
+      1B~3B      n=  91  medianAPE=82.7%  medianSignedLogError=-1.752
+      > 3B       n=  12  medianAPE=93.8%  medianSignedLogError=-2.797
+  [V1_YEAR_CAP_50pct] evalTargets=1001, noFinalSample=0, 평가 1001건
+    MAE=375,965,160  MedianAE=129,991,408  MdAPE=68.7%  P75APE=126.7%  P90APE=384.0%  MedianALE=0.815
+    within25%=16.4%  within50%=34.8%  0.5x~2x=42.4%  typicalRangeCoverage=49.5%
+    medianSignedLogError=-0.005 (양수=과대추정 경향)  medianPredicted/ActualRatio=0.995  medianRangeWidthRatio(P75/P25)=4.88
+    예산 규모별 breakdown (n, medianAPE, medianSignedLogError):
+      <= 100M    n= 359  medianAPE=182.9%  medianSignedLogError=1.040
+      100M~300M  n= 292  medianAPE=41.9%  medianSignedLogError=0.028
+      300M~1B    n= 247  medianAPE=54.9%  medianSignedLogError=-0.792
+      1B~3B      n=  91  medianAPE=82.7%  medianSignedLogError=-1.752
+      > 3B       n=  12  medianAPE=93.8%  medianSignedLogError=-2.797
+  [V4_HYBRID_cap50pct_loss0.10] evalTargets=1001, noFinalSample=0, 평가 1001건
+    MAE=375,965,160  MedianAE=129,991,408  MdAPE=68.7%  P75APE=126.7%  P90APE=384.0%  MedianALE=0.815
+    within25%=16.4%  within50%=34.8%  0.5x~2x=42.4%  typicalRangeCoverage=49.5%
+    medianSignedLogError=-0.005 (양수=과대추정 경향)  medianPredicted/ActualRatio=0.995  medianRangeWidthRatio(P75/P25)=4.88
+    예산 규모별 breakdown (n, medianAPE, medianSignedLogError):
+      <= 100M    n= 359  medianAPE=182.9%  medianSignedLogError=1.040
+      100M~300M  n= 292  medianAPE=41.9%  medianSignedLogError=0.028
+      300M~1B    n= 247  medianAPE=54.9%  medianSignedLogError=-0.792
+      1B~3B      n=  91  medianAPE=82.7%  medianSignedLogError=-1.752
+      > 3B       n=  12  medianAPE=93.8%  medianSignedLogError=-2.797
+

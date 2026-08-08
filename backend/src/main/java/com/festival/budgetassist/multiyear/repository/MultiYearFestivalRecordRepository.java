@@ -26,4 +26,11 @@ public interface MultiYearFestivalRecordRepository extends JpaRepository<MultiYe
     List<MultiYearFestivalRecord> findByDatasetYearAndBudgetQualityFlagNot(Integer datasetYear, BudgetQualityFlag budgetQualityFlag);
 
     List<MultiYearFestivalRecord> findByImportBatchId(Long batchId);
+
+    /**
+     * leakage-safe 다년도 실험 API용 - {@code datasetYear < year}인 record만 DB 쿼리 단계에서
+     * 걸러 온다. {@code year} 자체(예: 2026)나 그 이후 연도는 절대 포함되지 않으므로, 매 요청마다
+     * 전체 10,198행을 애플리케이션 메모리로 가져온 뒤 걸러내는 것보다 효율적이다.
+     */
+    List<MultiYearFestivalRecord> findByDatasetYearLessThan(Integer year);
 }

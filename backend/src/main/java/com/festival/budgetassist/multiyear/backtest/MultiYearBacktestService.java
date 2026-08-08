@@ -4,16 +4,23 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.stereotype.Service;
 
 import com.festival.budgetassist.estimate.AlgorithmConfig;
 import com.festival.budgetassist.estimate.FallbackLevel;
+import com.festival.budgetassist.festival.domain.FestivalType;
+import com.festival.budgetassist.festival.domain.Region;
+import com.festival.budgetassist.festival.domain.VenueType;
 import com.festival.budgetassist.multiyear.domain.MultiYearFestivalRecord;
 import com.festival.budgetassist.multiyear.repository.MultiYearFestivalRecordRepository;
 
 /**
- * leakage-safe 다년도 baseline backtest 오케스트레이터.
+ * leakage-safe 다년도 baseline backtest 오케스트레이터 - 그리고 {@link #predictForQuery}를 통해
+ * 같은 순수 계산 경로를 "실제 사용자 입력 1건에 대한 즉석 예측"에도 재사용할 수 있게 공개한다
+ * ({@code multiyear.experimental} 패키지의 {@code MultiYearExperimentalEstimateService}가
+ * 이 메서드를 호출한다 - 자세한 설명은 그 클래스 Javadoc 참고).
  *
  * <p>production {@link com.festival.budgetassist.estimate.BudgetEstimatorService}와 같은
  * 구조(계층형 fallback 후보 선정 -> 유사도 -> 기간보정 -> winsorize -> 가중통계 -> legacy
@@ -25,11 +32,13 @@ import com.festival.budgetassist.multiyear.repository.MultiYearFestivalRecordRep
  * 전혀 건드리지 않고 import하지도 않는다 - {@link AlgorithmConfig}(읽기 전용 공개 설정 Bean)만
  * 공유해서 같은 가중치/threshold 값을 쓴다.</p>
  *
- * <p>후보 선정({@link #selectFinalSample})과 통계 집계({@link #aggregate})를 분리해 둔 것은
- * {@link MultiYearSeriesCorrectionBacktestService}(festivalSeries 중복 보정 S0/S1/S2 비교
- * 실험)가 "정확히 같은 candidate selection 결과"를 재사용하면서 최종 weight만 다르게 넣어
+ * <p>후보 선정({@link #selectFinalSample})과 통계 집계({@link #computeCoreStats})를 분리해 둔
+ * 것은 {@link MultiYearSeriesCorrectionBacktestService}(festivalSeries 중복 보정 S0/S1/S2
+ * 비교 실험)가 "정확히 같은 candidate selection 결과"를 재사용하면서 최종 weight만 다르게 넣어
  * 재집계할 수 있게 하기 위해서다 - 두 메서드는 package-private이라 같은 패키지 안에서만
- * 재사용된다.</p>
+ * 재사용된다. {@link #predictForQuery}만 공개(public) API로, 이 계산 core를 외부(experimental
+ * API 등)에 노출하되 backtest 내부 타입({@code FinalSample}/{@code MultiYearScoredCandidate}
+ * 등)은 전혀 새어나가지 않고 새 공개 DTO({@link MultiYearPredictionResult})로만 반환한다.</p>
  */
 @Service
 public class MultiYearBacktestService {
@@ -101,9 +110,105 @@ public class MultiYearBacktestService {
         return aggregate(target, fs, weights);
     }
 
+    // ------------------------------------------------------------------
+    // 실제 사용자 입력 1건에 대한 즉석 예측 - /budget-assistant "다년도 실험 분석" 영역이 쓴다.
+    // ------------------------------------------------------------------
+
+    /**
+     * {@link #predictForQuery}가 사용하는 targetYear(현재 고정값 2026). 호출자(예: 실험 API
+     * 서비스)가 이 값보다 이른 record만 미리 repository 쿼리 단계에서 걸러 오도록(성능) 노출한다 -
+     * "2026"을 여러 곳에 따로 하드코딩해 값이 어긋날 위험을 없앤다.
+     */
+    public int predictionTargetYear() {
+        return MultiYearBacktestFold.PRIMARY_2026.targetYear();
+    }
+
+    /**
+     * 실제 backtest(evaluation against a known historical target)가 아니라, "이 조건으로
+     * targetYear에 축제를 연다면"이라는 가상의 요청 1건에 대한 예측이다 - 그래서 target 자체의
+     * "실제 예산"이 없다(아직 열리지 않은 축제이므로) - {@link #aggregate}가 계산하는
+     * absoluteError/APE/ALE/typicalRangeCoverage 같은 "정답과 비교하는" 지표는 여기 전혀
+     * 등장하지 않는다. candidate selection/유사도/기간보정/winsorize/가중통계 공식은
+     * {@link #selectFinalSample}/{@link #computeCoreStats}를 그대로 재사용한다 - 이 메서드
+     * 자체는 그 두 메서드를 호출/조립하는 얇은 wrapper일 뿐, 새 계산식을 추가하지 않는다.
+     *
+     * <p>festivalSeries는 이 경로 어디에서도 쓰이지 않는다(과거 series budget을 직접 참조하는
+     * 건 production에 없는 정보를 쓰는 leakage이므로 애초에 config 대상이 아니다) - inflation도
+     * 항상 OFF로 고정 호출된다(seriesCorrection/inflation/recency/COVID는 전부 이번 기능의
+     * 범위 밖).</p>
+     *
+     * @param recordsBeforeTargetYear 이미 leakage-safe하게 {@code datasetYear < targetYear}로
+     *                                걸러진 record 목록(호출자가 repository 쿼리 단계에서 걸러
+     *                                오는 것을 권장 - {@link #runAllFolds}처럼 전체를 넘겨도
+     *                                동작은 같지만 불필요하게 느리다. {@link
+     *                                MultiYearBacktestDatasetBuilder}가 어차피 다시 한 번
+     *                                datasetYear/데이터품질/feature 결측 기준으로 걸러내므로
+     *                                안전하다 - 이 메서드 자체가 leakage를 만들지 않는다).
+     */
+    public MultiYearPredictionResult predictForQuery(Region regionCode, String district, Set<FestivalType> festivalTypeTokens,
+                                                       VenueType venueType, Integer durationDays,
+                                                       List<MultiYearFestivalRecord> recordsBeforeTargetYear) {
+        MultiYearBacktestFold fold = MultiYearBacktestFold.PRIMARY_2026; // targetYear=2026, training 2017~2025(고정)
+        int targetYear = fold.targetYear();
+        int trainingYearFrom = 2017;
+        int trainingYearTo = fold.trainCutoffYearInclusive();
+
+        MultiYearBacktestDataset dataset = datasetBuilder.build(recordsBeforeTargetYear, fold);
+        List<MultiYearFestivalRecord> trainingPool = dataset.trainingPool();
+
+        MultiYearBacktestQuery query = new MultiYearBacktestQuery(regionCode, district, festivalTypeTokens, venueType, durationDays);
+        FinalSample fs = selectFinalSample(query, targetYear, trainingPool, false);
+        if (fs == null) {
+            return MultiYearPredictionResult.empty(targetYear, trainingYearFrom, trainingYearTo);
+        }
+
+        double[] weights = fs.finalSample().stream().mapToDouble(c -> c.score().weight()).toArray();
+        CoreStats stats = computeCoreStats(fs, weights);
+
+        List<MultiYearFestivalRecord> sampleRecords = fs.finalSample().stream().map(MultiYearScoredCandidate::record).toList();
+        int distinctYearsUsed = (int) sampleRecords.stream().map(MultiYearFestivalRecord::getDatasetYear).distinct().count();
+        int earliestSourceYear = sampleRecords.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).min().orElseThrow();
+        int latestSourceYear = sampleRecords.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).max().orElseThrow();
+
+        List<MultiYearPredictionCandidate> topCandidates = fs.finalSample().stream()
+                .limit(10)
+                .map(this::toPredictionCandidate)
+                .toList();
+
+        return new MultiYearPredictionResult(
+                targetYear, trainingYearFrom, trainingYearTo,
+                Math.round(stats.estimated()), Math.round(stats.weightedAverage()), Math.round(stats.recommendedBudget()),
+                Math.round(stats.p25()), Math.round(stats.p50()), Math.round(stats.p75()),
+                stats.sampleCount(), distinctYearsUsed, earliestSourceYear, latestSourceYear,
+                fs.selection().level().name(), stats.similarityScoreAvg(), stats.v3().score(),
+                topCandidates
+        );
+    }
+
+    private MultiYearPredictionCandidate toPredictionCandidate(MultiYearScoredCandidate c) {
+        MultiYearFestivalRecord r = c.record();
+        return new MultiYearPredictionCandidate(
+                r.getDatasetYear(), r.getFestivalName(),
+                r.getRegionCode() != null ? r.getRegionCode().name() : null,
+                MultiYearFeatureResolver.resolveDistrict(r),
+                r.getFestivalType(),
+                r.getVenueType() != null ? r.getVenueType().name() : null,
+                r.getDurationDays(),
+                MultiYearFeatureResolver.budgetKrw(r),
+                Math.round(c.adjustedBudgetKrw()),
+                c.score().similarity(), c.score().weight(),
+                c.originLevel() != null ? c.originLevel().name() : null
+        );
+    }
+
     /** inflation 미적용 - 기존 baseline/series-correction 실험이 쓰는 기본 경로(하위호환, 동작 동일). */
     FinalSample selectFinalSample(MultiYearFestivalRecord target, List<MultiYearFestivalRecord> trainingPool) {
         return selectFinalSample(target, trainingPool, false);
+    }
+
+    /** inflation 파라미터 포함 오버로드 - {@link MultiYearBacktestQuery#from}으로 target을 query로 변환한 뒤 core에 위임한다. */
+    FinalSample selectFinalSample(MultiYearFestivalRecord target, List<MultiYearFestivalRecord> trainingPool, boolean applyInflation) {
+        return selectFinalSample(MultiYearBacktestQuery.from(target), target.getDatasetYear(), trainingPool, applyInflation);
     }
 
     /**
@@ -121,21 +226,56 @@ public class MultiYearBacktestService {
      * 다시 계산한다(그렇지 않으면 인플레이션으로 전체적으로 커진 candidate 값을, 인플레이션
      * 적용 전 기준으로 만들어진 낮은 상한에 부당하게 clip하게 된다).</p>
      *
-     * @param applyInflation true면 candidate의 실제 budget을 target의 datasetYear 가격 수준으로
+     * <p>query/targetYear를 직접 받는 이 형태가 core다 - {@link #predictForQuery}(실제 target
+     * record가 없는 즉석 예측)와 target-record 기반 오버로드(backtest 평가) 둘 다 여기로
+     * 수렴한다.</p>
+     *
+     * @param applyInflation true면 candidate의 실제 budget을 targetYear 가격 수준으로
      *                        환산한 뒤(inflationAdjustedBudget = raw * CPI(targetYear)/CPI(candidateYear))
      *                        이후 단계를 진행한다. CPI(candidateYear)는 항상 training 기간(따라서
      *                        targetYear보다 이른 연도)의 값만 참조한다 - target year 이후 CPI는
      *                        구조적으로 조회 자체가 불가능하다(트레이닝 풀 자체가 이미 그렇게 필터링됨).
      */
-    FinalSample selectFinalSample(MultiYearFestivalRecord target, List<MultiYearFestivalRecord> trainingPool, boolean applyInflation) {
-        MultiYearBacktestQuery query = MultiYearBacktestQuery.from(target);
-        int targetYear = target.getDatasetYear();
-
+    FinalSample selectFinalSample(MultiYearBacktestQuery query, int targetYear, List<MultiYearFestivalRecord> trainingPool,
+                                   boolean applyInflation) {
         MultiYearCandidateSelectionResult selection = candidateSelector.select(trainingPool, query);
         if (selection.candidates().isEmpty()) {
             return null;
         }
+        return scoreAndFinalize(query, targetYear, trainingPool, applyInflation, selection);
+    }
 
+    /**
+     * selector lab 전용 추가 진입점 - {@code candidateSelector}(V0, production/실험 API가 실제로
+     * 쓰는 유일한 경로) 대신 임의의 {@link MultiYearCandidateSelectionStrategy}(V1~V4 등)로 후보를
+     * 선정한 뒤, 이후 채점 단계는 {@link #scoreAndFinalize}로 baseline과 완전히 동일하게 위임한다.
+     * production/{@code multiyear.experimental} 어디에서도 이 오버로드를 호출하지 않는다 -
+     * CandidateSelector concentration 분석/backtest 비교({@code MultiYearSelectorLab*})만 쓴다.
+     */
+    FinalSample selectFinalSample(MultiYearCandidateSelectionStrategy strategy, MultiYearBacktestQuery query, int targetYear,
+                                   List<MultiYearFestivalRecord> trainingPool, boolean applyInflation) {
+        MultiYearCandidateSelectionResult selection = strategy.select(trainingPool, query);
+        if (selection.candidates().isEmpty()) {
+            return null;
+        }
+        return scoreAndFinalize(query, targetYear, trainingPool, applyInflation, selection);
+    }
+
+    /** {@link #selectFinalSample(MultiYearCandidateSelectionStrategy, MultiYearBacktestQuery, int, List, boolean)}의 target-record 기반 편의 오버로드(selector lab backtest 전용, inflation 항상 OFF). */
+    FinalSample selectFinalSample(MultiYearCandidateSelectionStrategy strategy, MultiYearFestivalRecord target,
+                                   List<MultiYearFestivalRecord> trainingPool) {
+        return selectFinalSample(strategy, MultiYearBacktestQuery.from(target), target.getDatasetYear(), trainingPool, false);
+    }
+
+    /**
+     * 이미 선정이 끝난 {@code selection}(어떤 전략으로 만들어졌든 상관없이)을 받아 유사도 -&gt;
+     * [물가보정] -&gt; 기간보정 -&gt; winsorize -&gt; threshold+상위 N건 컷까지 baseline과 완전히
+     * 동일한 공식으로 채점한다. {@link #selectFinalSample(MultiYearBacktestQuery, int, List,
+     * boolean)}(V0 경로)와 selector lab 경로 둘 다 이 메서드로 수렴한다 - "선정 전략이 달라도
+     * 채점 공식은 절대 바뀌지 않는다"를 코드 구조로 보장한다.
+     */
+    private FinalSample scoreAndFinalize(MultiYearBacktestQuery query, int targetYear, List<MultiYearFestivalRecord> trainingPool,
+                                          boolean applyInflation, MultiYearCandidateSelectionResult selection) {
         // winsorize 기준값: 같은 축제유형(overlap) "전체" training 모집단(선정된 후보군이 아니라
         // training 전체)에서 구한다 - production과 동일한 설계, training 기간만 쓰므로 leakage 없음.
         // applyInflation=true면 이 모집단도 물가보정된 값으로 통일한다(위 Javadoc 설명).
@@ -206,9 +346,47 @@ public class MultiYearBacktestService {
      * 전혀 건드리지 않는다.
      */
     MultiYearBacktestPrediction aggregate(MultiYearFestivalRecord target, FinalSample fs, double[] weights) {
-        List<MultiYearScoredCandidate> finalSample = fs.finalSample();
+        CoreStats stats = computeCoreStats(fs, weights);
         MultiYearBacktestQuery query = fs.query();
         MultiYearCandidateSelectionResult selection = fs.selection();
+
+        long distinctSeriesCount = MultiYearBacktestSeriesDiagnostics.distinctSeriesCount(
+                fs.finalSample().stream().map(MultiYearScoredCandidate::record).toList());
+
+        long actualBudget = MultiYearFeatureResolver.budgetKrw(target);
+        long estimatedRounded = Math.round(stats.estimated());
+        // p25/p75는 winsorize의 log-exp 왕복 계산 때문에 이론상 정수인 값도 부동소수점 잡음(예:
+        // 99999999.99999997)이 낄 수 있다 - 리포트/CSV에 노출하는 값과 typicalRangeCoverage 판정
+        // 기준을 반드시 같은(반올림된) 값으로 맞춰야 "표에 보이는 P25~P75 범위인데 coverage=false"처럼
+        // 모순되게 보이는 걸 막을 수 있다.
+        long p25Rounded = Math.round(stats.p25());
+        long p75Rounded = Math.round(stats.p75());
+        double absoluteError = Math.abs((double) estimatedRounded - actualBudget);
+        double absolutePercentageError = actualBudget != 0 ? absoluteError / actualBudget : Double.NaN;
+        double absoluteLogError = (stats.estimated() > 0 && actualBudget > 0)
+                ? Math.abs(Math.log(stats.estimated()) - Math.log(actualBudget)) : Double.NaN;
+        boolean typicalRangeCoverage = actualBudget >= p25Rounded && actualBudget <= p75Rounded;
+
+        return new MultiYearBacktestPrediction(
+                target.getDatasetYear(), target.getId(), target.getFestivalName(),
+                query.regionCode() != null ? query.regionCode().name() : null, query.district(),
+                target.getFestivalType(), target.getVenueType() != null ? target.getVenueType().name() : null,
+                target.getDurationDays(), actualBudget, estimatedRounded, Math.round(stats.weightedAverage()),
+                Math.round(stats.recommendedBudget()), p25Rounded, p75Rounded, stats.sampleCount(), distinctSeriesCount,
+                selection.level().name(), stats.v3().score(), typicalRangeCoverage,
+                absoluteError, absolutePercentageError, absoluteLogError
+        );
+    }
+
+    /**
+     * {@link #selectFinalSample}이 고정한 finalSample + 주어진 weight로 "정답과 비교하지 않는"
+     * 순수 통계(가중평균/추정예산/P25~P75/유사도평균/완전성/v3/추천예산)만 계산한다. backtest
+     * 평가({@link #aggregate})와 즉석 예측({@link #predictForQuery}) 둘 다 이 메서드를 공유한다 -
+     * "target의 실제 예산이 있는지 없는지"와 무관하게 이 단계까지는 완전히 동일한 계산이다.
+     */
+    private CoreStats computeCoreStats(FinalSample fs, double[] weights) {
+        List<MultiYearScoredCandidate> finalSample = fs.finalSample();
+        MultiYearBacktestQuery query = fs.query();
 
         int sampleCount = finalSample.size();
         double[] values = finalSample.stream().mapToDouble(MultiYearScoredCandidate::winsorizedBudgetKrw).toArray();
@@ -236,32 +414,8 @@ public class MultiYearBacktestService {
         MultiYearDataQualityV3 v3 = v3Calculator.compute(effectiveSampleSize, similarityScoreAvg, p25, p75,
                 completenessScore, originLevels, weights, query.district() != null);
 
-        long distinctSeriesCount = MultiYearBacktestSeriesDiagnostics.distinctSeriesCount(
-                finalSample.stream().map(MultiYearScoredCandidate::record).toList());
-
-        long actualBudget = MultiYearFeatureResolver.budgetKrw(target);
-        long estimatedRounded = Math.round(estimated);
-        // p25/p75는 winsorize의 log-exp 왕복 계산 때문에 이론상 정수인 값도 부동소수점 잡음(예:
-        // 99999999.99999997)이 낄 수 있다 - 리포트/CSV에 노출하는 값과 typicalRangeCoverage 판정
-        // 기준을 반드시 같은(반올림된) 값으로 맞춰야 "표에 보이는 P25~P75 범위인데 coverage=false"처럼
-        // 모순되게 보이는 걸 막을 수 있다.
-        long p25Rounded = Math.round(p25);
-        long p75Rounded = Math.round(p75);
-        double absoluteError = Math.abs((double) estimatedRounded - actualBudget);
-        double absolutePercentageError = actualBudget != 0 ? absoluteError / actualBudget : Double.NaN;
-        double absoluteLogError = (estimated > 0 && actualBudget > 0)
-                ? Math.abs(Math.log(estimated) - Math.log(actualBudget)) : Double.NaN;
-        boolean typicalRangeCoverage = actualBudget >= p25Rounded && actualBudget <= p75Rounded;
-
-        return new MultiYearBacktestPrediction(
-                target.getDatasetYear(), target.getId(), target.getFestivalName(),
-                query.regionCode() != null ? query.regionCode().name() : null, query.district(),
-                target.getFestivalType(), target.getVenueType() != null ? target.getVenueType().name() : null,
-                target.getDurationDays(), actualBudget, estimatedRounded, Math.round(weightedAverage),
-                Math.round(recommendedBudget), p25Rounded, p75Rounded, sampleCount, distinctSeriesCount,
-                selection.level().name(), v3.score(), typicalRangeCoverage,
-                absoluteError, absolutePercentageError, absoluteLogError
-        );
+        return new CoreStats(sampleCount, weightedAverage, estimated, p25, p50, p60, p75,
+                similarityScoreAvg, completenessScore, recommendedBudget, v3);
     }
 
     /**
@@ -305,5 +459,11 @@ public class MultiYearBacktestService {
     /** {@link #selectFinalSample}의 결과 - 후보선정+유사도+winsorize까지 끝난, 재집계 준비가 된 표본. */
     record FinalSample(MultiYearBacktestQuery query, MultiYearCandidateSelectionResult selection,
                         List<MultiYearScoredCandidate> finalSample) {
+    }
+
+    /** {@link #computeCoreStats}의 결과 - "정답과 비교하지 않는" 순수 통계. */
+    private record CoreStats(int sampleCount, double weightedAverage, double estimated, double p25, double p50, double p60,
+                              double p75, double similarityScoreAvg, double completenessScore, double recommendedBudget,
+                              MultiYearDataQualityV3 v3) {
     }
 }

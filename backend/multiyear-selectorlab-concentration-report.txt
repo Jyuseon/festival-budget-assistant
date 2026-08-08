@@ -1,0 +1,86 @@
+================ CandidateSelector 연도 Concentration 분석 (V0~V4) ================
+targetYear=2026, training=2017~2025, trainingPool=8262건
+벤치마크: district=null 670건 (2026 실데이터 (region,type,venue,duration) 유니크 조합), district 지정 991건
+
+---------------- [1] district=null 벤치마크 ----------------
+[V0_CURRENT] 예측 670건
+  distinctYearsUsed 분포:
+    1: 577건 (86.1%)
+    2: 1건 (0.1%)
+    3: 2건 (0.3%)
+    4: 3건 (0.4%)
+    5+: 87건 (13.0%)
+    8+: 46건 (6.9%)
+  sourceYear=2025 단일연도만 사용: 577건 (86.1%)
+  top-year weightShare >= 90%: 577건 (86.1%)
+  top-year weightShare >= 75%: 580건 (86.6%)
+  top-year weightShare >= 50%: 585건 (87.3%)
+  effectiveYearCount: median=1.00, p25=1.00, p75=1.00
+  sampleCount: median=50, averageSimilarity: median=0.813, minimumSimilarity: median=0.750
+  fallback tier별 breakdown:
+    SAME_REGION_TYPE_VENUE   case=  23  median distinctYears=1.0  median effectiveYearCount=1.00  median latestYearWeightShare=1.000
+    NATIONWIDE_TYPE_VENUE    case= 554  median distinctYears=1.0  median effectiveYearCount=1.00  median latestYearWeightShare=1.000
+    SAME_REGION_TYPE         case=  91  median distinctYears=8.0  median effectiveYearCount=5.57  median latestYearWeightShare=0.105
+    NATIONWIDE_TYPE          case=   2  median distinctYears=5.5  median effectiveYearCount=3.20  median latestYearWeightShare=0.146
+  예시(연도별 candidateCount/weightShare) - concentration 상위 3건:
+    sampleCount=39 distinctYearsUsed=1 fallbackLevel=NATIONWIDE_TYPE_VENUE avgSimilarity=0.811
+      2025 -> 39건 / 100.0%
+    sampleCount=50 distinctYearsUsed=1 fallbackLevel=NATIONWIDE_TYPE_VENUE avgSimilarity=0.785
+      2025 -> 50건 / 100.0%
+    sampleCount=50 distinctYearsUsed=1 fallbackLevel=NATIONWIDE_TYPE_VENUE avgSimilarity=0.807
+      2025 -> 50건 / 100.0%
+
+  ---- V0~V4 candidate composition 비교 (10절) ----
+  variant                           n   medN  medDistY   medEffY medLatShr medAvgSim medMinSim
+  V0_CURRENT                      670     50      1.00      1.00     1.000     0.813    0.750
+  V1_YEAR_CAP_40pct               670     50      7.00      4.96     0.062     0.925    0.923
+  V1_YEAR_CAP_50pct               670     50      7.00      4.95     0.062     0.925    0.923
+  V1_YEAR_CAP_60pct               670     50      7.00      4.94     0.062     0.925    0.923
+  V2_DIVERSIFIED_TOPK_band0.05    670     50      9.00      7.89     0.080     0.925    0.900
+  V2_DIVERSIFIED_TOPK_band0.10    670     50      9.00      8.57     0.094     0.921    0.866
+  V3_MIN_DISTINCT_YEARS_3         670     50      7.00      4.91     0.062     0.925    0.923
+  V3_MIN_DISTINCT_YEARS_4         670     50      7.00      4.91     0.062     0.925    0.923
+  V3_MIN_DISTINCT_YEARS_5         670     50      7.00      4.91     0.062     0.925    0.923
+  V4_HYBRID_cap50pct_loss0.10     670     50      7.00      4.89     0.062     0.925    0.923
+
+---------------- [2] district 지정 벤치마크(참고, 표본 더 작음) ----------------
+[V0_CURRENT] 예측 991건
+  distinctYearsUsed 분포:
+    1: 887건 (89.5%)
+    2: 1건 (0.1%)
+    3: 2건 (0.2%)
+    4: 2건 (0.2%)
+    5+: 99건 (10.0%)
+    8+: 85건 (8.6%)
+  sourceYear=2025 단일연도만 사용: 887건 (89.5%)
+  top-year weightShare >= 90%: 887건 (89.5%)
+  top-year weightShare >= 75%: 890건 (89.8%)
+  top-year weightShare >= 50%: 894건 (90.2%)
+  effectiveYearCount: median=1.00, p25=1.00, p75=1.00
+  sampleCount: median=50, averageSimilarity: median=0.822, minimumSimilarity: median=0.765
+  fallback tier별 breakdown:
+    SAME_DISTRICT_TYPE_VENUE case=  22  median distinctYears=1.0  median effectiveYearCount=1.00  median latestYearWeightShare=1.000
+    SAME_REGION_TYPE_VENUE   case=  50  median distinctYears=1.0  median effectiveYearCount=1.00  median latestYearWeightShare=1.000
+    NATIONWIDE_TYPE_VENUE    case= 815  median distinctYears=1.0  median effectiveYearCount=1.00  median latestYearWeightShare=1.000
+    SAME_REGION_TYPE         case= 102  median distinctYears=8.0  median effectiveYearCount=5.92  median latestYearWeightShare=0.062
+    NATIONWIDE_TYPE          case=   2  median distinctYears=6.0  median effectiveYearCount=3.69  median latestYearWeightShare=0.175
+  예시(연도별 candidateCount/weightShare) - concentration 상위 3건:
+    sampleCount=39 distinctYearsUsed=1 fallbackLevel=NATIONWIDE_TYPE_VENUE avgSimilarity=0.824
+      2025 -> 39건 / 100.0%
+    sampleCount=50 distinctYearsUsed=1 fallbackLevel=NATIONWIDE_TYPE_VENUE avgSimilarity=0.820
+      2025 -> 50건 / 100.0%
+    sampleCount=50 distinctYearsUsed=1 fallbackLevel=NATIONWIDE_TYPE_VENUE avgSimilarity=0.819
+      2025 -> 50건 / 100.0%
+
+  ---- V0~V4 candidate composition 비교 (10절) ----
+  variant                           n   medN  medDistY   medEffY medLatShr medAvgSim medMinSim
+  V0_CURRENT                      991     50      1.00      1.00     1.000     0.822    0.765
+  V1_YEAR_CAP_40pct               991     50      9.00      6.01     0.063     0.944    0.923
+  V1_YEAR_CAP_50pct               991     50      9.00      6.03     0.063     0.943    0.923
+  V1_YEAR_CAP_60pct               991     50      9.00      6.04     0.063     0.943    0.923
+  V2_DIVERSIFIED_TOPK_band0.05    991     20      8.00      5.64     0.105     0.968    0.938
+  V2_DIVERSIFIED_TOPK_band0.10    991     50      9.00      8.44     0.096     0.944    0.913
+  V3_MIN_DISTINCT_YEARS_3         991     50      9.00      6.01     0.064     0.942    0.923
+  V3_MIN_DISTINCT_YEARS_4         991     50      9.00      6.02     0.064     0.942    0.923
+  V3_MIN_DISTINCT_YEARS_5         991     50      9.00      6.02     0.064     0.942    0.923
+  V4_HYBRID_cap50pct_loss0.10     991     50      9.00      5.97     0.064     0.943    0.923
