@@ -79,6 +79,22 @@ public class FestivalSeriesLinkingService {
 
     private static final int MAX_CANDIDATES_PERSISTED_PER_SOURCE = 3;
 
+    // ------------------------------------------------------------------
+    // strict chain linking (4단계) 전용 상수 - 일반 fuzzy(HIGH_THRESHOLD=0.92)보다 훨씬 보수적이다.
+    // ------------------------------------------------------------------
+
+    /** chain edge 하나가 성립하려면 이름 유사도가 이 이상이어야 한다(일반 fuzzy floor 0.90보다 높음). */
+    static final double CHAIN_EDGE_MIN_NAME_SIMILARITY = 0.95;
+    /** chain edge의 두 연도는 반드시 인접(gap<=1)해야 한다 - "small year gap"을 문자 그대로 강하게 해석. */
+    private static final int CHAIN_EDGE_MAX_YEAR_GAP = 1;
+    /**
+     * 컴포넌트(체인) 전체를 하나의 series로 최종 확정하려면 "모든" pairwise 이름 유사도의 최솟값이
+     * 이 이상이어야 한다 - edge(인접 쌍)만 강해도 체인 양 끝단(A-C)이 실제로는 다른 축제로
+     * drift했을 수 있어 별도로 재검사한다. 0.90/0.92/0.95 후보를 비교한 뒤 가장 보수적인 0.95를
+     * 그대로 채택했다(분석 결과는 리포트의 chainClusterThresholdComparison 참고).
+     */
+    static final double CHAIN_CLUSTER_MIN_SIMILARITY = 0.95;
+
     private final MultiYearFestivalRecordRepository recordRepository;
     private final FestivalSeriesRepository seriesRepository;
     private final FestivalSeriesMembershipRepository membershipRepository;
@@ -157,7 +173,230 @@ public class FestivalSeriesLinkingService {
                 .map(c -> candidateRepository.save(c.toEntity()))
                 .toList();
 
-        return FestivalSeriesLinkingReportBuilder.build(allRecords, savedSeries, savedMemberships, savedCandidates);
+        // 4) strict chain linking: ambiguous로 남은 singleton들 사이의 안전한 체인만 조건부 병합
+        ChainLinkingResult chainResult = runChainLinking(savedMemberships);
+        savedSeries.removeAll(chainResult.removedSeries());
+        savedSeries.addAll(chainResult.addedSeries());
+        savedMemberships.removeAll(chainResult.removedMemberships());
+        savedMemberships.addAll(chainResult.addedMemberships());
+
+        return FestivalSeriesLinkingReportBuilder.build(allRecords, savedSeries, savedMemberships, savedCandidates,
+                chainResult.componentAudits(), chainResult.thresholdComparison());
+    }
+
+    // ------------------------------------------------------------------
+    // 4) strict chain linking
+    // ------------------------------------------------------------------
+
+    /**
+     * fuzzy 단계(2번)에서 "같은 singleton에 서로 다른 series를 가리키는 HIGH 후보가 2개 이상"이라
+     * 보류된(ambiguous) 행들 - 정확히는 여전히 UNMATCHED인 singleton 전체 - 를 대상으로,
+     * 훨씬 보수적인 조건(이름 유사도 0.95+, 인접 연도, district/유형 충돌 없음)의 edge만 모아
+     * 그래프를 만들고, 연결요소(component) 전체를 다시 한 번 전수 재검증한 뒤에만 병합한다.
+     *
+     * <p>2번 fuzzy 단계와 달리 "무조건 union-find로 합친다"가 아니라, 컴포넌트 하나하나에 대해
+     * (1) 모든 pairwise 이름 유사도 최솟값이 임계값 이상인지 (2) 유형/district가 서로 충돌하는
+     * 쌍이 하나도 없는지 (3) 같은 연도가 중복되지 않는지를 다시 확인해서, 하나라도 실패하면
+     * 그 컴포넌트 전체를 병합하지 않는다(부분적으로 병합하지 않음 - 전부 아니면 전무).</p>
+     */
+    private ChainLinkingResult runChainLinking(List<FestivalSeriesMembership> currentMemberships) {
+        List<FestivalSeriesMembership> unmatchedMemberships = currentMemberships.stream()
+                .filter(m -> m.getMatchMethod() == MatchMethod.UNMATCHED)
+                .toList();
+
+        List<Cluster> pool = new ArrayList<>();
+        Map<Long, FestivalSeriesMembership> membershipByRecordId = new LinkedHashMap<>();
+        int idx = 0;
+        for (FestivalSeriesMembership m : unmatchedMemberships) {
+            MultiYearFestivalRecord r = m.getFestivalRecord();
+            pool.add(new Cluster(idx++, ClusterKey.of(r), List.of(r)));
+            membershipByRecordId.put(r.getId(), m);
+        }
+
+        Map<BucketKey, List<Cluster>> buckets = new LinkedHashMap<>();
+        for (Cluster c : pool) {
+            buckets.computeIfAbsent(new BucketKey(c.key().scope(), c.key().regionKey()), k -> new ArrayList<>()).add(c);
+        }
+
+        UnionFind chainUf = new UnionFind(pool);
+        List<ChainEdge> allEdges = new ArrayList<>();
+        for (List<Cluster> bucket : buckets.values()) {
+            for (int i = 0; i < bucket.size(); i++) {
+                for (int j = i + 1; j < bucket.size(); j++) {
+                    ChainEdge edge = strictChainEdge(bucket.get(i), bucket.get(j));
+                    if (edge != null) {
+                        allEdges.add(edge);
+                        chainUf.union(bucket.get(i).index(), bucket.get(j).index());
+                    }
+                }
+            }
+        }
+
+        Map<Integer, List<Cluster>> byRoot = new LinkedHashMap<>();
+        for (Cluster c : pool) {
+            byRoot.computeIfAbsent(chainUf.find(c.index()), k -> new ArrayList<>()).add(c);
+        }
+
+        double[] candidateThresholds = {0.90, 0.92, 0.95};
+        Map<String, Integer> thresholdComparison = new LinkedHashMap<>();
+        for (double t : candidateThresholds) {
+            thresholdComparison.put(fmtThreshold(t), 0);
+        }
+
+        List<ChainComponentAudit> audits = new ArrayList<>();
+        List<FestivalSeries> removedSeries = new ArrayList<>();
+        List<FestivalSeriesMembership> removedMemberships = new ArrayList<>();
+        List<FestivalSeries> addedSeries = new ArrayList<>();
+        List<FestivalSeriesMembership> addedMemberships = new ArrayList<>();
+
+        int componentSeq = 0;
+        for (List<Cluster> component : byRoot.values()) {
+            if (component.size() < 2) {
+                continue; // strict edge가 하나도 없어 혼자 남음 - 감사할 것 없음
+            }
+            componentSeq++;
+            List<MultiYearFestivalRecord> members = component.stream().map(c -> c.members().get(0)).toList();
+            PairwiseCheck check = fullPairwiseCheck(members);
+
+            for (double t : candidateThresholds) {
+                boolean wouldPass = check.minPairwiseSimilarity() >= t
+                        && !check.typeConflict() && !check.districtConflict() && !check.duplicateYear();
+                if (wouldPass) {
+                    thresholdComparison.merge(fmtThreshold(t), 1, Integer::sum);
+                }
+            }
+
+            boolean applied = check.minPairwiseSimilarity() >= CHAIN_CLUSTER_MIN_SIMILARITY
+                    && !check.typeConflict() && !check.districtConflict() && !check.duplicateYear();
+            String rejectionReason = applied ? null : buildRejectionReason(check);
+
+            List<Integer> componentIndexes = component.stream().map(Cluster::index).toList();
+            List<ChainEdge> componentEdges = allEdges.stream()
+                    .filter(e -> componentIndexes.contains(e.clusterIndexA()) && componentIndexes.contains(e.clusterIndexB()))
+                    .toList();
+
+            audits.add(new ChainComponentAudit(componentSeq, members, pickAnchor(members), check, componentEdges, applied, rejectionReason));
+
+            if (applied) {
+                for (MultiYearFestivalRecord r : members) {
+                    FestivalSeriesMembership old = membershipByRecordId.get(r.getId());
+                    removedMemberships.add(old);
+                    removedSeries.add(old.getFestivalSeries());
+                }
+                membershipRepository.deleteAll(members.stream().map(r -> membershipByRecordId.get(r.getId())).toList());
+                // festival_record_id에 UNIQUE 제약이 있어서, 같은 record를 가리키는 새 membership을
+                // 곧바로 저장하면 Hibernate의 기본 flush 순서(insert가 delete보다 먼저 실행됨) 때문에
+                // "삭제되기 전" 상태의 unique 제약을 위반한다 - 반드시 delete를 먼저 DB에 반영(flush)한
+                // 뒤에 insert해야 한다.
+                membershipRepository.flush();
+                seriesRepository.deleteAll(members.stream().map(r -> membershipByRecordId.get(r.getId()).getFestivalSeries()).toList());
+                seriesRepository.flush();
+
+                MultiYearFestivalRecord anchor = pickAnchor(members);
+                FestivalSeries mergedSeries = seriesRepository.save(FestivalSeries.builder()
+                        .canonicalName(FestivalNameNormalizer.normalize(anchor.getFestivalName()))
+                        .canonicalRegion(resolveRegionKey(anchor))
+                        .canonicalDistrict(resolveDistrictKey(anchor))
+                        .firstObservedYear(members.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).min().orElseThrow())
+                        .lastObservedYear(members.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).max().orElseThrow())
+                        .recordCount(members.size())
+                        .matchStatus(FestivalSeriesMatchStatus.CHAIN_MERGED)
+                        .scope(component.get(0).key().scope())
+                        .build());
+                addedSeries.add(mergedSeries);
+                for (MultiYearFestivalRecord r : members) {
+                    addedMemberships.add(saveMembership(r, mergedSeries, MatchMethod.CHAIN_HIGH_CONFIDENCE,
+                            check.meanPairwiseSimilarity(), MatchConfidence.HIGH));
+                }
+            }
+        }
+
+        return new ChainLinkingResult(removedSeries, removedMemberships, addedSeries, addedMemberships, audits, thresholdComparison);
+    }
+
+    /**
+     * 두 singleton(각각 record 1개짜리 Cluster) 사이의 strict chain edge 여부. 일반 fuzzy score()를
+     * 재사용하되(band=HIGH 요구), 추가로 이름 유사도 0.95+, district/유형 충돌 없음, 연도 gap<=1을
+     * 전부 만족해야 한다 - "small year gap"을 yearAdjacencySignal(gap<=5까지 중립)보다 훨씬 좁게
+     * (gap<=1) 강제한다.
+     */
+    private ChainEdge strictChainEdge(Cluster a, Cluster b) {
+        ScoredCandidate candidate = score(a, b);
+        if (candidate == null || candidate.band() != MatchConfidence.HIGH) {
+            return null;
+        }
+        if (candidate.nameSimilarity() < CHAIN_EDGE_MIN_NAME_SIMILARITY) {
+            return null;
+        }
+        if (candidate.districtSignal() < 0 || candidate.typeSignal() < 0) {
+            return null;
+        }
+        if (Math.abs(a.firstYear() - b.firstYear()) > CHAIN_EDGE_MAX_YEAR_GAP) {
+            return null;
+        }
+        return new ChainEdge(a.index(), b.index(), a.members().get(0).getId(), a.firstYear(),
+                b.members().get(0).getId(), b.firstYear(), candidate.nameSimilarity(), candidate.score());
+    }
+
+    /**
+     * 컴포넌트(체인 후보) 내부 "모든" 쌍(edge로 연결됐는지와 무관하게)을 다시 채점한다 - A-B, B-C가
+     * 각각 강해도 A-C가 실제로는 다른 축제일 수 있는 drift를 잡기 위함이다.
+     */
+    private PairwiseCheck fullPairwiseCheck(List<MultiYearFestivalRecord> members) {
+        List<Double> similarities = new ArrayList<>();
+        boolean typeConflict = false;
+        boolean districtConflict = false;
+        for (int i = 0; i < members.size(); i++) {
+            for (int j = i + 1; j < members.size(); j++) {
+                MultiYearFestivalRecord ra = members.get(i);
+                MultiYearFestivalRecord rb = members.get(j);
+                String ka = FestivalNameNormalizer.fuzzyKey(FestivalNameNormalizer.normalize(ra.getFestivalName()));
+                String kb = FestivalNameNormalizer.fuzzyKey(FestivalNameNormalizer.normalize(rb.getFestivalName()));
+                similarities.add(LevenshteinSimilarity.ratio(ka, kb));
+
+                String da = resolveDistrictKey(ra);
+                String db = resolveDistrictKey(rb);
+                if (da != null && db != null && !da.equals(db)) {
+                    districtConflict = true;
+                }
+                var typesA = splitTypes(ra.getFestivalType());
+                var typesB = splitTypes(rb.getFestivalType());
+                if (!typesA.isEmpty() && !typesB.isEmpty() && typesA.stream().noneMatch(typesB::contains)) {
+                    typeConflict = true;
+                }
+            }
+        }
+        boolean duplicateYear = members.stream().map(MultiYearFestivalRecord::getDatasetYear).distinct().count() < members.size();
+        double min = similarities.stream().mapToDouble(Double::doubleValue).min().orElse(0.0);
+        double mean = similarities.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+        return new PairwiseCheck(min, mean, typeConflict, districtConflict, duplicateYear);
+    }
+
+    private MultiYearFestivalRecord pickAnchor(List<MultiYearFestivalRecord> members) {
+        return members.stream()
+                .min(Comparator.comparing(MultiYearFestivalRecord::getDatasetYear).thenComparing(MultiYearFestivalRecord::getId))
+                .orElseThrow();
+    }
+
+    private String buildRejectionReason(PairwiseCheck check) {
+        List<String> reasons = new ArrayList<>();
+        if (check.minPairwiseSimilarity() < CHAIN_CLUSTER_MIN_SIMILARITY) {
+            reasons.add("컴포넌트 내 최소 이름유사도 %.3f < %.2f".formatted(check.minPairwiseSimilarity(), CHAIN_CLUSTER_MIN_SIMILARITY));
+        }
+        if (check.typeConflict()) {
+            reasons.add("festivalType 충돌 쌍 존재");
+        }
+        if (check.districtConflict()) {
+            reasons.add("district 충돌 쌍 존재(서로 다른 실제 시군구)");
+        }
+        if (check.duplicateYear()) {
+            reasons.add("같은 연도(datasetYear) 중복 record 존재");
+        }
+        return String.join("; ", reasons);
+    }
+
+    private String fmtThreshold(double t) {
+        return "%.2f".formatted(t);
     }
 
     private FestivalSeriesMembership saveMembership(MultiYearFestivalRecord record, FestivalSeries series,
@@ -205,28 +444,37 @@ public class FestivalSeriesLinkingService {
         for (List<Cluster> bucket : buckets.values()) {
             List<Cluster> singletons = bucket.stream().filter(c -> c.members().size() == 1).toList();
             for (Cluster source : singletons) {
+                // 모든 다른 클러스터(다행짜리든 다른 singleton이든)를 빠짐없이 평가한다. 예전에는
+                // "singleton-singleton 쌍은 인덱스가 작은 쪽만 평가"해서 계산을 아꼈는데, 이게
+                // 단순 중복계산 방지가 아니라 실제 정보 누락이었다 - 체인 중간 연도(예: 2018)는
+                // 자신보다 index가 작은 2017쪽 후보를 아예 못 보고 2019쪽만 봐서, 실제로는
+                // 2017/2019 둘 다에 HIGH로 걸리는 애매한 경우인데도 "유일한 HIGH 후보"로
+                // 오인해 곧바로(체인 검증 없이) 자동 병합해버렸다. 대칭적으로 전부 평가해야
+                // ambiguous 판정과 strict chain linking의 UNMATCHED 풀 구성이 올바르다.
                 List<ScoredCandidate> forSource = new ArrayList<>();
+                Map<Integer, Boolean> yearConflictByTargetIndex = new LinkedHashMap<>();
                 for (Cluster target : bucket) {
                     if (target.index() == source.index()) {
-                        continue;
-                    }
-                    // singleton-singleton 쌍은 인덱스가 작은 쪽만 source로 평가해 중복 계산을 피한다.
-                    if (target.members().size() == 1 && target.index() < source.index()) {
                         continue;
                     }
                     ScoredCandidate candidate = score(source, target);
                     if (candidate != null) {
                         forSource.add(candidate);
+                        yearConflictByTargetIndex.put(target.index(), hasYearOverlap(source, target));
                     }
                 }
                 forSource.sort(Comparator.comparingDouble(ScoredCandidate::score).reversed());
 
-                long highCount = forSource.stream().filter(c -> c.band() == MatchConfidence.HIGH).count();
-                ScoredCandidate applied = null;
-                if (highCount == 1) {
-                    applied = forSource.stream().filter(c -> c.band() == MatchConfidence.HIGH).findFirst().orElseThrow();
-                }
-                // highCount >= 2: 서로 다른 series를 가리키는 HIGH 후보가 둘 이상 -> 애매하므로 연결하지 않는다.
+                // 같은 datasetYear를 공유하는 후보는 이름/지역/유형이 아무리 비슷해도 절대 자동
+                // 병합(union) 대상이 될 수 없다 - 서로 다른 두 record가 "같은 연도의 같은 series"에
+                // 들어가는 것은 항상 오류다. highCount/applied 판단에서는 제외하되(자동 병합 금지),
+                // 검토용 후보 목록(forSource, 저장)에서는 그대로 노출해 사람이 볼 수 있게 한다.
+                List<ScoredCandidate> highEligible = forSource.stream()
+                        .filter(c -> c.band() == MatchConfidence.HIGH)
+                        .filter(c -> !yearConflictByTargetIndex.getOrDefault(c.targetClusterIndex(), false))
+                        .toList();
+                ScoredCandidate applied = highEligible.size() == 1 ? highEligible.get(0) : null;
+                // highEligible.size() >= 2: 서로 다른 series를 가리키는 HIGH 후보가 둘 이상 -> 애매하므로 연결하지 않는다.
 
                 for (int i = 0; i < forSource.size() && i < MAX_CANDIDATES_PERSISTED_PER_SOURCE; i++) {
                     ScoredCandidate c = forSource.get(i);
@@ -295,6 +543,26 @@ public class FestivalSeriesLinkingService {
             return -YEAR_FAR_PENALTY;
         }
         return 0.0;
+    }
+
+    /**
+     * 두 클러스터가 같은 datasetYear를 하나라도 공유하는지. 공유하면 아무리 이름/지역/유형이
+     * 비슷해도 절대 자동 병합해서는 안 된다 - 같은 연도에 서로 다른 record 2개가 하나의
+     * series에 들어가는 것은 항상 데이터 오류다(예산 추정 등 다운스트림에서 "그 해 값이 2개"인
+     * 모순을 만든다).
+     */
+    private boolean hasYearOverlap(Cluster a, Cluster b) {
+        for (MultiYearFestivalRecord ra : a.members()) {
+            for (MultiYearFestivalRecord rb : b.members()) {
+                // getDatasetYear()는 Integer(박싱)이라 "=="는 -128~127 캐시 범위 밖(연도는 항상
+                // 이 범위 밖)에서 레퍼런스 비교가 되어 버려 값이 같아도 거의 항상 false가 된다 -
+                // 반드시 .equals()로 값 비교해야 한다.
+                if (ra.getDatasetYear() != null && ra.getDatasetYear().equals(rb.getDatasetYear())) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** 두 [min,max] 연도 구간의 간격. 겹치거나 맞닿으면(gap<=1) 0/1을 반환, 아니면 떨어진 연수. */
@@ -575,5 +843,29 @@ public class FestivalSeriesLinkingService {
                     .scope(anchor.key().scope())
                     .build();
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 4) strict chain linking 전용 내부 타입
+    // ------------------------------------------------------------------
+
+    /** strict 조건(이름유사도 0.95+, district/유형 충돌 없음, 연도 gap<=1, HIGH)을 만족하는 두 record 사이의 edge. */
+    record ChainEdge(int clusterIndexA, int clusterIndexB, long recordIdA, int yearA, long recordIdB, int yearB,
+                      double nameSimilarity, double score) {
+    }
+
+    /** 컴포넌트 전체에 대한 전수 pairwise 재검증 결과. */
+    record PairwiseCheck(double minPairwiseSimilarity, double meanPairwiseSimilarity,
+                          boolean typeConflict, boolean districtConflict, boolean duplicateYear) {
+    }
+
+    /** strict chain linking이 평가한 연결요소 1개(자동 병합됐든 거부됐든 전부 기록). */
+    record ChainComponentAudit(int componentId, List<MultiYearFestivalRecord> members, MultiYearFestivalRecord anchor,
+                                PairwiseCheck check, List<ChainEdge> edges, boolean applied, String rejectionReason) {
+    }
+
+    record ChainLinkingResult(List<FestivalSeries> removedSeries, List<FestivalSeriesMembership> removedMemberships,
+                               List<FestivalSeries> addedSeries, List<FestivalSeriesMembership> addedMemberships,
+                               List<ChainComponentAudit> componentAudits, Map<String, Integer> thresholdComparison) {
     }
 }

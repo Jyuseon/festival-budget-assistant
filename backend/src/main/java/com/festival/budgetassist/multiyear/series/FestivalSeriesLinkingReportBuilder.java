@@ -17,14 +17,19 @@ import com.festival.budgetassist.multiyear.domain.MatchMethod;
 import com.festival.budgetassist.multiyear.domain.MultiYearFestivalRecord;
 import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.AmbiguousSingleton;
 import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.CandidateSummary;
+import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.ChainComponentSummary;
+import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.ChainEdgeSummary;
+import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.ChainMember;
 import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.DuplicationImpact;
 import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.SeriesSummary;
 import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.YearEntry;
+import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingService.ChainComponentAudit;
+import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingService.ChainEdge;
 
 /** {@link FestivalSeriesLinkingService#linkAll()}의 영속화 결과를 {@link FestivalSeriesLinkingReport}로 집계한다. */
 final class FestivalSeriesLinkingReportBuilder {
 
-    private static final int TOP_N = 30;
+    private static final int TOP_N = 50;
     private static final int SAMPLE_N = 20;
     private static final int[] MIN_YEARS_PRESENT_BUCKETS = {7, 8, 9, 10};
 
@@ -34,7 +39,9 @@ final class FestivalSeriesLinkingReportBuilder {
     static FestivalSeriesLinkingReport build(List<MultiYearFestivalRecord> allRecords,
                                               List<FestivalSeries> allSeries,
                                               List<FestivalSeriesMembership> allMemberships,
-                                              List<FestivalSeriesMatchCandidate> allCandidates) {
+                                              List<FestivalSeriesMatchCandidate> allCandidates,
+                                              List<ChainComponentAudit> chainAudits,
+                                              Map<String, Integer> chainThresholdComparison) {
 
         Map<Long, List<FestivalSeriesMembership>> membershipsBySeries = new LinkedHashMap<>();
         for (FestivalSeriesMembership m : allMemberships) {
@@ -85,7 +92,15 @@ final class FestivalSeriesLinkingReportBuilder {
                 .limit(SAMPLE_N)
                 .toList();
 
-        List<AmbiguousSingleton> ambiguous = buildAmbiguousSingletons(allCandidates, candidateSummaries);
+        Set<Long> resolvedByChain = allMemberships.stream()
+                .filter(m -> m.getMatchMethod() == MatchMethod.CHAIN_HIGH_CONFIDENCE)
+                .map(m -> m.getFestivalRecord().getId())
+                .collect(java.util.stream.Collectors.toSet());
+        List<AmbiguousSingleton> ambiguous = buildAmbiguousSingletons(candidateSummaries, resolvedByChain);
+
+        List<ChainComponentSummary> chainComponents = chainAudits.stream()
+                .map(FestivalSeriesLinkingReportBuilder::toChainComponentSummary)
+                .toList();
 
         Map<Integer, Integer> yearCountHistogram = new TreeMap<>();
         for (SeriesSummary s : summaries) {
@@ -114,7 +129,9 @@ final class FestivalSeriesLinkingReportBuilder {
                 yearCountHistogram,
                 duplicationImpact,
                 candidateCountsByBand,
-                appliedCount
+                appliedCount,
+                chainComponents,
+                chainThresholdComparison
         );
     }
 
@@ -168,9 +185,13 @@ final class FestivalSeriesLinkingReportBuilder {
         );
     }
 
-    /** applied된 후보가 하나도 없는데 HIGH band 후보가 2개 이상인 source들 - "여러 series 중 하나를 고를 수 없어 보류"된 사례. */
-    private static List<AmbiguousSingleton> buildAmbiguousSingletons(List<FestivalSeriesMatchCandidate> allCandidates,
-                                                                       List<CandidateSummary> candidateSummaries) {
+    /**
+     * applied된 후보가 하나도 없는데 HIGH band 후보가 2개 이상인 source들 - "여러 series 중
+     * 하나를 고를 수 없어 보류"된 사례. strict chain linking으로 이후 실제 병합된 source는
+     * 더 이상 애매한 게 아니므로(resolvedByChain) 제외한다.
+     */
+    private static List<AmbiguousSingleton> buildAmbiguousSingletons(List<CandidateSummary> candidateSummaries,
+                                                                       Set<Long> resolvedByChain) {
         Map<Long, List<CandidateSummary>> bySource = new LinkedHashMap<>();
         for (CandidateSummary c : candidateSummaries) {
             bySource.computeIfAbsent(c.sourceRecordId(), k -> new ArrayList<>()).add(c);
@@ -178,6 +199,9 @@ final class FestivalSeriesLinkingReportBuilder {
 
         List<AmbiguousSingleton> result = new ArrayList<>();
         for (Map.Entry<Long, List<CandidateSummary>> entry : bySource.entrySet()) {
+            if (resolvedByChain.contains(entry.getKey())) {
+                continue;
+            }
             List<CandidateSummary> highOnes = entry.getValue().stream()
                     .filter(c -> c.band() == MatchConfidence.HIGH)
                     .toList();
@@ -190,6 +214,51 @@ final class FestivalSeriesLinkingReportBuilder {
             }
         }
         return result;
+    }
+
+    private static ChainComponentSummary toChainComponentSummary(ChainComponentAudit audit) {
+        String anchorNormalized = FestivalNameNormalizer.normalize(audit.anchor().getFestivalName());
+        String anchorFuzzyKey = FestivalNameNormalizer.fuzzyKey(anchorNormalized);
+
+        List<ChainMember> members = audit.members().stream()
+                .map(r -> {
+                    String normalized = FestivalNameNormalizer.normalize(r.getFestivalName());
+                    double simToAnchor = r.getId().equals(audit.anchor().getId())
+                            ? 1.0
+                            : LevenshteinSimilarity.ratio(anchorFuzzyKey, FestivalNameNormalizer.fuzzyKey(normalized));
+                    return new ChainMember(r.getId(), r.getDatasetYear(), r.getFestivalName(), normalized,
+                            r.getDistrictText() != null ? r.getDistrictText() : r.getDistrictRaw(), r.getFestivalType(), simToAnchor);
+                })
+                .sorted(Comparator.comparingInt(ChainMember::year))
+                .toList();
+
+        List<ChainEdgeSummary> edges = audit.edges().stream()
+                .map(e -> new ChainEdgeSummary(e.recordIdA(), e.yearA(), e.recordIdB(), e.yearB(), e.nameSimilarity(), e.score()))
+                .toList();
+
+        MultiYearFestivalRecord anyMember = audit.members().get(0);
+        String region = resolveRegionForReport(anyMember);
+        String district = resolveDistrictForReport(anyMember);
+
+        return new ChainComponentSummary(
+                audit.componentId(), anchorNormalized, region, district,
+                anyMember.getDistrictText() == null && (anyMember.getDistrictRaw() == null) ? "REGION_LEVEL" : "DISTRICT_LEVEL",
+                members, edges,
+                audit.check().minPairwiseSimilarity(), audit.check().meanPairwiseSimilarity(),
+                audit.check().typeConflict(), audit.check().districtConflict(), audit.check().duplicateYear(),
+                audit.applied(), audit.rejectionReason()
+        );
+    }
+
+    private static String resolveRegionForReport(MultiYearFestivalRecord r) {
+        if (r.getRegionCode() != null) {
+            return r.getRegionCode().getDisplayName();
+        }
+        return r.getRegionText() != null ? r.getRegionText() : r.getRegionRaw();
+    }
+
+    private static String resolveDistrictForReport(MultiYearFestivalRecord r) {
+        return r.getDistrictText() != null ? r.getDistrictText() : r.getDistrictRaw();
     }
 
     private static DuplicationImpact buildDuplicationImpact(List<SeriesSummary> summaries, int totalRecords) {

@@ -9,5 +9,10 @@ public enum FestivalSeriesMatchStatus {
     /** EXACT/NORMALIZED_EXACT(정규화된 이름+지역+시군구 완전 일치)만으로 2건 이상 묶임. */
     DETERMINISTIC,
     /** 최소 1건은 fuzzy(HIGH confidence)로 합류함 - 결정적 매칭보다 신뢰도가 낮으니 검토 우선순위 높음. */
-    FUZZY_MERGED
+    FUZZY_MERGED,
+    /**
+     * 애매(ambiguous)해서 fuzzy 단계에서는 보류됐다가 strict chain linking으로 합류함 -
+     * FUZZY_MERGED보다도 신뢰도가 낮게 취급해야 하니 별도로 구분한다.
+     */
+    CHAIN_MERGED
 }

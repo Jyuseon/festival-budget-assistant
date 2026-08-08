@@ -6,6 +6,9 @@ import java.util.Map;
 
 import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.AmbiguousSingleton;
 import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.CandidateSummary;
+import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.ChainComponentSummary;
+import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.ChainEdgeSummary;
+import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.ChainMember;
 import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.SeriesSummary;
 import com.festival.budgetassist.multiyear.series.FestivalSeriesLinkingReport.YearEntry;
 
@@ -71,7 +74,25 @@ public final class FestivalSeriesLinkingReportFormatter {
         lines.add("--- fuzzy MEDIUM(검토 목록) %d건 ---".formatted(r.mediumReviewCandidates().size()));
         r.mediumReviewCandidates().forEach(c -> lines.add(formatCandidate(c)));
 
-        lines.add("--- 애매해서 자동 연결을 보류한 사례(같은 singleton에 HIGH 후보 2개 이상): %d건 ---".formatted(r.ambiguousMultiHighSingletons().size()));
+        lines.add("--- strict chain linking: cluster-level 최소 이름유사도 threshold 후보 비교 ---");
+        lines.add("  (edge 자체는 항상 nameSim>=%.2f 요구 - 아래는 컴포넌트 전체 최소 pairwise 유사도 재검사 threshold만 비교)"
+                .formatted(FestivalSeriesLinkingService.CHAIN_EDGE_MIN_NAME_SIMILARITY));
+        r.chainClusterThresholdComparison().forEach((threshold, count) ->
+                lines.add("  threshold=%s: %d개 컴포넌트가 통과(district/유형 충돌·연도중복 없음 기준) -> 실제 적용값은 %.2f(가장 보수적)".formatted(
+                        threshold, count, FestivalSeriesLinkingService.CHAIN_CLUSTER_MIN_SIMILARITY)));
+
+        long chainApplied = r.chainComponents().stream().filter(ChainComponentSummary::applied).count();
+        long chainRejected = r.chainComponents().size() - chainApplied;
+        lines.add("--- strict chain linking 결과: 평가한 컴포넌트 %d개 (적용 %d / 거부 %d) ---".formatted(
+                r.chainComponents().size(), chainApplied, chainRejected));
+
+        lines.add("--- chain으로 자동 병합된 컴포넌트 %d개 (전수) ---".formatted(chainApplied));
+        r.chainComponents().stream().filter(ChainComponentSummary::applied).forEach(c -> formatChainComponent(lines, c));
+
+        lines.add("--- chain 후보였으나 안전장치에 걸려 거부된 컴포넌트 %d개 (전수) ---".formatted(chainRejected));
+        r.chainComponents().stream().filter(c -> !c.applied()).forEach(c -> formatChainComponent(lines, c));
+
+        lines.add("--- (chain linking 이후) 여전히 애매해서 자동 연결을 보류한 사례: %d건 ---".formatted(r.ambiguousMultiHighSingletons().size()));
         for (AmbiguousSingleton a : r.ambiguousMultiHighSingletons()) {
             lines.add("  [%d] %s (%d년, %s%s)".formatted(a.sourceRecordId(), a.sourceFestivalName(), a.sourceYear(),
                     a.sourceRegion(), a.sourceDistrict() == null ? "" : " " + a.sourceDistrict()));
@@ -80,6 +101,24 @@ public final class FestivalSeriesLinkingReportFormatter {
 
         lines.add("================ 리포트 종료 ================");
         return lines;
+    }
+
+    private static void formatChainComponent(List<String> lines, ChainComponentSummary c) {
+        lines.add("  컴포넌트 #%d: %s | %s%s (%s) | min=%.3f mean=%.3f | typeConflict=%s districtConflict=%s duplicateYear=%s%s".formatted(
+                c.componentId(), c.canonicalName(), c.region(), c.district() == null ? "" : " " + c.district(), c.scope(),
+                c.minPairwiseSimilarity(), c.meanPairwiseSimilarity(),
+                c.typeConflict(), c.districtConflict(), c.duplicateYear(),
+                c.applied() ? "" : " | 거부 사유: " + c.rejectionReason()));
+        for (ChainMember m : c.members()) {
+            lines.add("      [%d] %d년 %s (normalized=%s, district=%s, type=%s, 대표행 유사도=%.3f)".formatted(
+                    m.recordId(), m.year(), m.rawFestivalName(), m.normalizedName(),
+                    m.districtRaw() == null ? "-" : m.districtRaw(), m.festivalType() == null ? "-" : m.festivalType(),
+                    m.similarityToAnchor()));
+        }
+        for (ChainEdgeSummary e : c.edges()) {
+            lines.add("      edge: [%d](%d년) <-> [%d](%d년) nameSim=%.3f score=%.3f".formatted(
+                    e.recordIdA(), e.yearA(), e.recordIdB(), e.yearB(), e.nameSimilarity(), e.score()));
+        }
     }
 
     private static String formatCandidate(CandidateSummary c) {

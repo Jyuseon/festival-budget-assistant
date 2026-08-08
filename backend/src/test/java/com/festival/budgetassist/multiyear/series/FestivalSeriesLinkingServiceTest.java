@@ -297,4 +297,148 @@ class FestivalSeriesLinkingServiceTest {
         seriesRepository.findAll().forEach(s ->
                 assertEquals(SeriesScope.DISTRICT_LEVEL, s.getScope(), "\"중구청\"/\"중구\" 모두 실제 시군구라 REGION_LEVEL로 강등되면 안 됨"));
     }
+
+    // ------------------------------------------------------------------
+    // 10) strict chain linking - 이름 유사도가 25자 중 1글자만 달라 0.96(>=0.95)이 되도록
+    //     합성 문자열을 쓴다("가"를 24번 반복 + 끝자리 1글자). 연도 gap을 1 이하로 유지해야만
+    //     edge가 생기므로, A(2017)-B(2018)-C(2019)는 각각 인접 쌍만 직접 edge가 되고
+    //     A-C(gap=2)는 edge 시도 자체가 없다 - 그래도 A-C 유사도가 0.95 이상이면(끝자리만
+    //     다르므로 항상 0.96) 전체 재검증에서 안전하게 통과해야 한다.
+    // ------------------------------------------------------------------
+
+    private static String chainBase() {
+        return "가".repeat(24);
+    }
+
+    @Test
+    void strictChain_threeRecordsFormingASafeChain_mergeIntoOneChainMergedSeries() {
+        MultiYearFestivalRecord a = row(2017, 1, chainBase() + "1", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        MultiYearFestivalRecord b = row(2018, 2, chainBase() + "2", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        MultiYearFestivalRecord c = row(2019, 3, chainBase() + "3", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+
+        FestivalSeriesLinkingReport report = linkingService.linkAll();
+
+        assertEquals(1, seriesRepository.count(), "A-B, B-C가 각각 안전한 edge이고 A-C도 재검증을 통과하므로 하나로 합쳐져야 함");
+        FestivalSeries series = seriesRepository.findAll().get(0);
+        assertEquals(FestivalSeriesMatchStatus.CHAIN_MERGED, series.getMatchStatus());
+        assertEquals(3, series.getRecordCount());
+        assertEquals(MatchMethod.CHAIN_HIGH_CONFIDENCE, membershipOf(a.getId()).getMatchMethod());
+        assertEquals(MatchMethod.CHAIN_HIGH_CONFIDENCE, membershipOf(b.getId()).getMatchMethod());
+        assertEquals(MatchMethod.CHAIN_HIGH_CONFIDENCE, membershipOf(c.getId()).getMatchMethod());
+        assertEquals(com.festival.budgetassist.multiyear.domain.MatchConfidence.HIGH, membershipOf(a.getId()).getMatchConfidence());
+
+        boolean auditedAsApplied = report.chainComponents().stream()
+                .anyMatch(comp -> comp.applied() && comp.members().stream().anyMatch(m -> m.recordId() == a.getId()));
+        assertTrue(auditedAsApplied, "적용된 컴포넌트는 리포트 전수 목록에 남아야 함");
+    }
+
+    @Test
+    void strictChain_sameDatasetYearInComponent_isRejectedAndStaysUnmatched() {
+        // 같은 2020년에 서로 다른 record 2건 - 이름이 매우 유사해도(0.96) 같은 연도가
+        // 하나의 series/체인에 들어가면 안 된다.
+        MultiYearFestivalRecord a = row(2020, 1, chainBase() + "1", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        MultiYearFestivalRecord b = row(2020, 2, chainBase() + "2", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+
+        linkingService.linkAll();
+
+        assertEquals(2, seriesRepository.count(), "같은 연도 중복이라 병합되면 안 됨");
+        assertEquals(MatchMethod.UNMATCHED, membershipOf(a.getId()).getMatchMethod());
+        assertEquals(MatchMethod.UNMATCHED, membershipOf(b.getId()).getMatchMethod());
+    }
+
+    @Test
+    void strictChain_typeConflictBetweenNonAdjacentMembers_isRejected() {
+        // A(2017,CULTURE_ART) - B(2018,CULTURE_ART|NATURE_ECOLOGY) - C(2019,NATURE_ECOLOGY)
+        // A-B, B-C는 각각 유형이 겹쳐 edge가 되지만, A-C는 직접 비교되지 않았을 뿐 실제로는
+        // 유형이 전혀 겹치지 않는다 - 컴포넌트 전체 재검증에서 잡아내 거부해야 한다.
+        MultiYearFestivalRecord a = row(2017, 1, chainBase() + "1", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        row(2018, 2, chainBase() + "2", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART|NATURE_ECOLOGY");
+        MultiYearFestivalRecord c = row(2019, 3, chainBase() + "3", "경기", Region.GYEONGGI, "가평군", "NATURE_ECOLOGY");
+
+        linkingService.linkAll();
+
+        assertEquals(3, seriesRepository.count(), "type 충돌이 감지되면 컴포넌트 전체를 병합하지 않아야 함");
+        assertEquals(MatchMethod.UNMATCHED, membershipOf(a.getId()).getMatchMethod());
+        assertEquals(MatchMethod.UNMATCHED, membershipOf(c.getId()).getMatchMethod());
+    }
+
+    @Test
+    void strictChain_nameDriftAcrossChain_isRejectedByFullPairwiseRecheck() {
+        // A와 B는 1글자만 다르고(20자 중 1글자, ratio=0.95), B와 C도 1글자만 다르지만
+        // 서로 다른 자리라 A와 C는 2글자가 달라진다(ratio=0.90 < 0.95 cluster 임계값).
+        // A-B, B-C는 각각 edge가 되지만(연도도 인접) A-C는 재검증에서 걸려야 한다.
+        String posBase = "가나다라마바사아자차카타파하거너더러머버"; // 20자, 인덱스 0..19
+        String a = posBase; // 기준
+        String b = "갸" + posBase.substring(1); // 0번째 글자만 교체
+        String c = "갸냐" + posBase.substring(2); // 0,1번째 글자 교체(각각 b, a 대비 1글자 차이 누적)
+
+        MultiYearFestivalRecord ra = row(2017, 1, a, "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        row(2018, 2, b, "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        MultiYearFestivalRecord rc = row(2019, 3, c, "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+
+        FestivalSeriesLinkingReport report = linkingService.linkAll();
+
+        assertEquals(3, seriesRepository.count(), "체인 양 끝단이 실제로는 이름이 충분히 다르므로(0.90) 병합하면 안 됨");
+        assertEquals(MatchMethod.UNMATCHED, membershipOf(ra.getId()).getMatchMethod());
+        assertEquals(MatchMethod.UNMATCHED, membershipOf(rc.getId()).getMatchMethod());
+
+        boolean rejectedForSimilarity = report.chainComponents().stream()
+                .anyMatch(comp -> !comp.applied() && comp.members().size() == 3
+                        && comp.rejectionReason() != null && comp.rejectionReason().contains("이름유사도"));
+        assertTrue(rejectedForSimilarity, "거부 사유에 최소 이름유사도 미달이 기록돼야 함");
+    }
+
+    @Test
+    void strictChain_directDistrictConflict_neverFormsAnEdgeAtAll() {
+        // 서로 다른 실제 시군구(가평군 vs 여주시) - 이름이 아무리 비슷해도 district가 다르면
+        // strict edge 자체가 생기지 않아야 한다(district compatible 조건).
+        MultiYearFestivalRecord a = row(2017, 1, chainBase() + "1", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        MultiYearFestivalRecord b = row(2018, 2, chainBase() + "2", "경기", Region.GYEONGGI, "여주시", "CULTURE_ART");
+
+        linkingService.linkAll();
+
+        assertEquals(2, seriesRepository.count());
+        assertEquals(MatchMethod.UNMATCHED, membershipOf(a.getId()).getMatchMethod());
+        assertEquals(MatchMethod.UNMATCHED, membershipOf(b.getId()).getMatchMethod());
+    }
+
+    @Test
+    void strictChain_largeYearGap_neverFormsAnEdge() {
+        // A(2017)-B(2018)-C(2020): 셋 다 이름/지역/유형이 서로 HIGH급으로 비슷해서(nameSim 0.96)
+        // fuzzy 2단계에서는 전부 서로에게 ambiguous(HIGH 후보 2개 이상)라 아무도 자동 병합되지
+        // 않고 그대로 chain 풀로 넘어온다. chain 4단계에서는 A-B(gap=1)만 edge가 되고,
+        // B-C(gap=2)/A-C(gap=3)는 이름/지역/유형이 전부 충분한데도 "small year gap"(gap<=1)
+        // 조건 하나 때문에 edge가 형성되면 안 된다 - 그 결과 A,B만 하나의 chain series로
+        // 합쳐지고 C는 계속 UNMATCHED singleton으로 남아야 한다.
+        // (참고: 2-node만 있는 단순 케이스 - 예를 들어 A/C만 있고 gap=2 - 는 서로가 유일한
+        // HIGH 후보라 애초에 ambiguous가 아니어서 chain 단계 진입 전에 일반 FUZZY로 병합된다.
+        // 그건 chain의 gap 제한과 무관한 정상 동작이라 여기서 검증할 대상이 아니다.)
+        MultiYearFestivalRecord a = row(2017, 1, chainBase() + "1", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        MultiYearFestivalRecord b = row(2018, 2, chainBase() + "2", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        MultiYearFestivalRecord c = row(2020, 3, chainBase() + "3", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+
+        linkingService.linkAll();
+
+        assertEquals(2, seriesRepository.count(), "A-B만 chain edge가 되고 B-C/A-C는 gap>1이라 edge가 안 되므로 A,B 병합 + C 단독이어야 함");
+        assertEquals(MatchMethod.CHAIN_HIGH_CONFIDENCE, membershipOf(a.getId()).getMatchMethod());
+        assertEquals(MatchMethod.CHAIN_HIGH_CONFIDENCE, membershipOf(b.getId()).getMatchMethod());
+        assertEquals(membershipOf(a.getId()).getFestivalSeries().getId(), membershipOf(b.getId()).getFestivalSeries().getId());
+        assertEquals(MatchMethod.UNMATCHED, membershipOf(c.getId()).getMatchMethod(), "C는 A/B 어느 쪽과도 gap<=1이 아니라 chain edge가 없어야 함");
+    }
+
+    @Test
+    void strictChain_thresholdComparisonReportsCountsForEachCandidateThreshold() {
+        row(2017, 1, chainBase() + "1", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        row(2018, 2, chainBase() + "2", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        row(2019, 3, chainBase() + "3", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+
+        FestivalSeriesLinkingReport report = linkingService.linkAll();
+
+        assertEquals(3, report.chainClusterThresholdComparison().size());
+        assertTrue(report.chainClusterThresholdComparison().containsKey("0.90"));
+        assertTrue(report.chainClusterThresholdComparison().containsKey("0.92"));
+        assertTrue(report.chainClusterThresholdComparison().containsKey("0.95"));
+        assertTrue(report.chainClusterThresholdComparison().get("0.90") >= report.chainClusterThresholdComparison().get("0.95"),
+                "threshold가 낮을수록(느슨할수록) 통과하는 컴포넌트 수가 같거나 많아야 함");
+    }
 }

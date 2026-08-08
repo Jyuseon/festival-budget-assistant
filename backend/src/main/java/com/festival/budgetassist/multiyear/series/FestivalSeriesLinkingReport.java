@@ -27,7 +27,9 @@ public record FestivalSeriesLinkingReport(
         Map<Integer, Integer> seriesCountByDistinctYearCount,
         DuplicationImpact duplicationImpact,
         Map<MatchConfidence, Long> candidateCountsByBand,
-        long appliedCandidateCount
+        long appliedCandidateCount,
+        List<ChainComponentSummary> chainComponents,
+        Map<String, Integer> chainClusterThresholdComparison
 ) {
 
     public record YearEntry(int year, List<String> originalFestivalNames) {
@@ -70,6 +72,36 @@ public record FestivalSeriesLinkingReport(
     public record DuplicationImpact(
             Map<Integer, Integer> seriesCountByMinYearsPresent,
             Map<Integer, Double> rowShareByMinYearsPresent
+    ) {
+    }
+
+    /** strict chain linking이 평가한 연결요소(component) 1개 - 자동 병합됐든 거부됐든 전부 담는다. */
+    public record ChainComponentSummary(
+            int componentId,
+            String canonicalName,
+            String region,
+            String district,
+            String scope,
+            List<ChainMember> members,
+            List<ChainEdgeSummary> edges,
+            double minPairwiseSimilarity,
+            double meanPairwiseSimilarity,
+            boolean typeConflict,
+            boolean districtConflict,
+            boolean duplicateYear,
+            boolean applied,
+            String rejectionReason
+    ) {
+    }
+
+    public record ChainMember(
+            long recordId, int year, String rawFestivalName, String normalizedName,
+            String districtRaw, String festivalType, double similarityToAnchor
+    ) {
+    }
+
+    public record ChainEdgeSummary(
+            long recordIdA, int yearA, long recordIdB, int yearB, double nameSimilarity, double score
     ) {
     }
 }
