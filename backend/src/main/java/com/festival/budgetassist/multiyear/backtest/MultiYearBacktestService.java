@@ -3,6 +3,7 @@ package com.festival.budgetassist.multiyear.backtest;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
@@ -38,6 +39,7 @@ public class MultiYearBacktestService {
     private final MultiYearCandidateSelector candidateSelector;
     private final MultiYearSimilarityCalculator similarityCalculator;
     private final MultiYearDataQualityV3Calculator v3Calculator;
+    private final AnnualPriceIndexProvider priceIndexProvider;
     private final AlgorithmConfig config;
 
     MultiYearBacktestService(MultiYearFestivalRecordRepository recordRepository,
@@ -45,12 +47,14 @@ public class MultiYearBacktestService {
                               MultiYearCandidateSelector candidateSelector,
                               MultiYearSimilarityCalculator similarityCalculator,
                               MultiYearDataQualityV3Calculator v3Calculator,
+                              AnnualPriceIndexProvider priceIndexProvider,
                               AlgorithmConfig config) {
         this.recordRepository = recordRepository;
         this.datasetBuilder = datasetBuilder;
         this.candidateSelector = candidateSelector;
         this.similarityCalculator = similarityCalculator;
         this.v3Calculator = v3Calculator;
+        this.priceIndexProvider = priceIndexProvider;
         this.config = config;
     }
 
@@ -97,15 +101,35 @@ public class MultiYearBacktestService {
         return aggregate(target, fs, weights);
     }
 
-    /**
-     * 후보 선정 단계(계층형 fallback -> 유사도 -> winsorize -> threshold+상위 N건) - series
-     * correction 여부와 무관하게 항상 같은 결과를 내야 한다(지시사항 5절: "series correction
-     * 때문에 CandidateSelector 자체가 다른 후보를 뽑도록 하지 마"). 정렬/상한 컷은 항상 원본
-     * similarity weight 기준이다 - series correction은 이 메서드가 반환한 finalSample이 정해진
-     * "다음" 단계({@link #aggregate})에서만 적용된다.
-     */
+    /** inflation 미적용 - 기존 baseline/series-correction 실험이 쓰는 기본 경로(하위호환, 동작 동일). */
     FinalSample selectFinalSample(MultiYearFestivalRecord target, List<MultiYearFestivalRecord> trainingPool) {
+        return selectFinalSample(target, trainingPool, false);
+    }
+
+    /**
+     * 후보 선정 단계(계층형 fallback -> 유사도 -> [물가보정] -> 기간보정 -> winsorize -> threshold+상위
+     * N건) - series correction/inflation 여부와 무관하게 항상 같은 후보가 선정돼야 한다(지시사항,
+     * "series correction/inflation 때문에 CandidateSelector 자체가 다른 후보를 뽑도록 하지 마").
+     * similarity는 budget과 무관한 feature(유형/지역/장소/기간)만으로 계산되므로 이 조건은 자동으로
+     * 만족된다 - inflation은 오직 각 candidate의 "budget 값"에만 영향을 주고, 정렬/상한 컷 기준인
+     * {@code score.weight()}(=similarity^2)는 전혀 건드리지 않는다.
+     *
+     * <p><b>적용 순서</b>: 물가보정을 기간보정보다 먼저 적용한다. 두 보정 모두 budget에 대한
+     * 곱셈 스케일링이라 순서 자체는 최종 candidate 값에 영향이 없지만(교환법칙), winsorize
+     * 모집단(같은 유형의 training 전체 log-budget 분포)은 반드시 "같은 처리를 거친" 값으로
+     * 만들어야 한다 - 그래서 물가보정 켜짐 상태에서는 winsorize 모집단도 물가보정된 budget으로
+     * 다시 계산한다(그렇지 않으면 인플레이션으로 전체적으로 커진 candidate 값을, 인플레이션
+     * 적용 전 기준으로 만들어진 낮은 상한에 부당하게 clip하게 된다).</p>
+     *
+     * @param applyInflation true면 candidate의 실제 budget을 target의 datasetYear 가격 수준으로
+     *                        환산한 뒤(inflationAdjustedBudget = raw * CPI(targetYear)/CPI(candidateYear))
+     *                        이후 단계를 진행한다. CPI(candidateYear)는 항상 training 기간(따라서
+     *                        targetYear보다 이른 연도)의 값만 참조한다 - target year 이후 CPI는
+     *                        구조적으로 조회 자체가 불가능하다(트레이닝 풀 자체가 이미 그렇게 필터링됨).
+     */
+    FinalSample selectFinalSample(MultiYearFestivalRecord target, List<MultiYearFestivalRecord> trainingPool, boolean applyInflation) {
         MultiYearBacktestQuery query = MultiYearBacktestQuery.from(target);
+        int targetYear = target.getDatasetYear();
 
         MultiYearCandidateSelectionResult selection = candidateSelector.select(trainingPool, query);
         if (selection.candidates().isEmpty()) {
@@ -114,9 +138,10 @@ public class MultiYearBacktestService {
 
         // winsorize 기준값: 같은 축제유형(overlap) "전체" training 모집단(선정된 후보군이 아니라
         // training 전체)에서 구한다 - production과 동일한 설계, training 기간만 쓰므로 leakage 없음.
+        // applyInflation=true면 이 모집단도 물가보정된 값으로 통일한다(위 Javadoc 설명).
         double[] typePopulationLogBudgets = trainingPool.stream()
                 .filter(r -> MultiYearFeatureResolver.typesOverlap(query.typeTokens(), MultiYearFeatureResolver.resolveTypeTokens(r)))
-                .mapToDouble(r -> Math.log(MultiYearFeatureResolver.budgetKrw(r)))
+                .mapToDouble(r -> Math.log(inflationAdjustedBudget(r, targetYear, applyInflation)))
                 .toArray();
         double lowerLogBound = typePopulationLogBudgets.length > 0
                 ? MultiYearBacktestMath.quantile(typePopulationLogBudgets, config.getWinsorizeLowerPercentile())
@@ -128,7 +153,7 @@ public class MultiYearBacktestService {
         List<MultiYearScoredCandidate> scored = new ArrayList<>();
         for (MultiYearFestivalRecord candidate : selection.candidates()) {
             MultiYearSimilarityScore score = similarityCalculator.compute(query, candidate);
-            long candidateBudgetKrw = MultiYearFeatureResolver.budgetKrw(candidate);
+            double candidateBudgetKrw = inflationAdjustedBudget(candidate, targetYear, applyInflation);
             double adjustedBudget = query.durationDays() != null
                     ? durationAdjust(candidateBudgetKrw, candidate.getDurationDays(), query.durationDays())
                     : candidateBudgetKrw;
@@ -147,6 +172,30 @@ public class MultiYearBacktestService {
             return null;
         }
         return new FinalSample(query, selection, finalSample);
+    }
+
+    /**
+     * candidate의 원본 budget(원)을 targetYear 가격 수준으로 환산한다(지시사항 1절: {@code
+     * inflationAdjustedBudget = originalBudget * CPI(Y)/CPI(t)}). {@code applyInflation=false}면
+     * 원본 그대로 반환한다(A/B 변형과 완전히 동일한 값). CPI 테이블에 해당 연도가 없으면(이번
+     * 2017~2026 데이터셋에서는 발생하지 않지만 방어적으로) 보정 없이 원본을 그대로 쓴다.
+     */
+    private double inflationAdjustedBudget(MultiYearFestivalRecord record, int targetYear, boolean applyInflation) {
+        long raw = MultiYearFeatureResolver.budgetKrw(record);
+        if (!applyInflation) {
+            return raw;
+        }
+        return raw * inflationFactor(targetYear, record.getDatasetYear());
+    }
+
+    /** CPI(targetYear)/CPI(candidateYear). 어느 한쪽이라도 CPI 테이블에 없으면 1.0(보정 없음)을 반환한다. */
+    private double inflationFactor(int targetYear, int candidateYear) {
+        Optional<AnnualPriceIndex> targetCpi = priceIndexProvider.get(targetYear);
+        Optional<AnnualPriceIndex> candidateCpi = priceIndexProvider.get(candidateYear);
+        if (targetCpi.isEmpty() || candidateCpi.isEmpty()) {
+            return 1.0;
+        }
+        return targetCpi.get().indexValue() / candidateCpi.get().indexValue();
     }
 
     /**
@@ -215,8 +264,12 @@ public class MultiYearBacktestService {
         );
     }
 
-    /** production {@code DurationAdjuster.adjust}와 동일한 공식 - 클래스가 package-private이라 포팅. */
-    private double durationAdjust(long sourceBudgetKrw, Integer sourceDurationDays, int targetDurationDays) {
+    /**
+     * production {@code DurationAdjuster.adjust}와 동일한 공식 - 클래스가 package-private이라 포팅.
+     * sourceBudgetKrw를 {@code long}이 아니라 {@code double}로 받는다 - inflation 보정이 켜지면
+     * CPI 비율(정수 아님) 곱셈을 거친 값이 들어올 수 있기 때문이다.
+     */
+    private double durationAdjust(double sourceBudgetKrw, Integer sourceDurationDays, int targetDurationDays) {
         if (sourceDurationDays == null || sourceDurationDays <= 0) {
             return sourceBudgetKrw;
         }

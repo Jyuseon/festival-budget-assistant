@@ -62,8 +62,21 @@ class MultiYearSeriesCorrectionBacktestService {
         return byMode;
     }
 
+    /** inflation 미적용(하위호환) - S0/S1/S2 단독 비교 실험이 쓰는 기본 경로. */
     MultiYearFoldCorrectionResult runFold(List<MultiYearFestivalRecord> allRecords, MultiYearBacktestFold fold,
                                            MultiYearSeriesCorrectionMode mode) {
+        return runFold(allRecords, fold, mode, false);
+    }
+
+    /**
+     * @param applyInflation true면 candidate budget을 target 연도 가격 수준으로 환산한 뒤(물가보정
+     *                        먼저, 그다음 기간보정 - {@link MultiYearBacktestService#selectFinalSample}
+     *                        참고) winsorize/가중통계를 진행한다. series correction(mode)과 완전히
+     *                        직교(orthogonal)하는 축이다 - candidate selection은 이 값과 무관하게
+     *                        항상 동일하다.
+     */
+    MultiYearFoldCorrectionResult runFold(List<MultiYearFestivalRecord> allRecords, MultiYearBacktestFold fold,
+                                           MultiYearSeriesCorrectionMode mode, boolean applyInflation) {
         MultiYearBacktestDataset dataset = datasetBuilder.build(allRecords, fold);
 
         // leakage-safe: 이 fold의 training pool만으로 series membership을 처음부터 다시 계산한다
@@ -87,7 +100,7 @@ class MultiYearSeriesCorrectionBacktestService {
         int noFinalSample = 0;
         for (MultiYearFestivalRecord target : dataset.evalTargets()) {
             long pastCount = pastCountByDeterministicKey.getOrDefault(MultiYearBacktestSeriesDiagnostics.keyOf(target), 0L);
-            MultiYearSeriesCorrectionPrediction p = predictOne(target, dataset.trainingPool(), mode,
+            MultiYearSeriesCorrectionPrediction p = predictOne(target, dataset.trainingPool(), mode, applyInflation,
                     groupIdByRecordId, groupSizeByGroupId, labelByGroupId, pastSeriesLengthBucket(pastCount));
             if (p == null) {
                 noFinalSample++;
@@ -101,10 +114,10 @@ class MultiYearSeriesCorrectionBacktestService {
     }
 
     private MultiYearSeriesCorrectionPrediction predictOne(MultiYearFestivalRecord target, List<MultiYearFestivalRecord> trainingPool,
-                                                             MultiYearSeriesCorrectionMode mode,
+                                                             MultiYearSeriesCorrectionMode mode, boolean applyInflation,
                                                              Map<Long, Long> groupIdByRecordId, Map<Long, Long> groupSizeByGroupId,
                                                              Map<Long, String> labelByGroupId, String pastSeriesLengthBucket) {
-        MultiYearBacktestService.FinalSample fs = backtestService.selectFinalSample(target, trainingPool);
+        MultiYearBacktestService.FinalSample fs = backtestService.selectFinalSample(target, trainingPool, applyInflation);
         if (fs == null) {
             return null;
         }
