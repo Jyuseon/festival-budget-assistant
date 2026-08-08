@@ -72,7 +72,7 @@ class MultiYearExperimentalEstimateServiceTest {
         }
 
         MultiYearExperimentalEstimateResponse response = service.estimate(
-                new MultiYearExperimentalEstimateRequest("GYEONGGI", "이천시", "CULTURE_ART", "GREEN", 5));
+                new MultiYearExperimentalEstimateRequest("GYEONGGI", "이천시", "CULTURE_ART", "GREEN", 5, null, null));
 
         assertEquals("MULTIYEAR_BASELINE_S0", response.model());
         assertEquals(2026, response.targetYear());
@@ -93,7 +93,7 @@ class MultiYearExperimentalEstimateServiceTest {
         row(2021, 2, "이상치후보", Region.GYEONGGI, "이천시", "CULTURE_ART", 999_999, BudgetQualityFlag.UNIT_SCALE_SUSPECT);
 
         MultiYearExperimentalEstimateResponse response = service.estimate(
-                new MultiYearExperimentalEstimateRequest("GYEONGGI", "이천시", "CULTURE_ART", "GREEN", 5));
+                new MultiYearExperimentalEstimateRequest("GYEONGGI", "이천시", "CULTURE_ART", "GREEN", 5, null, null));
 
         assertEquals(1, response.sampleCount());
         assertEquals(100_000_000L, response.estimatedBudgetKrw());
@@ -107,7 +107,7 @@ class MultiYearExperimentalEstimateServiceTest {
         }
 
         MultiYearExperimentalEstimateResponse response = service.estimate(
-                new MultiYearExperimentalEstimateRequest("GYEONGGI", "이천시", "CULTURE_ART", "GREEN", 5));
+                new MultiYearExperimentalEstimateRequest("GYEONGGI", "이천시", "CULTURE_ART", "GREEN", 5, null, null));
 
         assertTrue(response.topSimilarFestivals().size() > 0);
         assertTrue(response.topSimilarFestivals().stream().allMatch(f -> f.venueType() == null),
@@ -118,6 +118,6 @@ class MultiYearExperimentalEstimateServiceTest {
     @Test
     void estimate_invalidRegionCode_throwsIllegalArgumentException() {
         assertThrows(IllegalArgumentException.class, () -> service.estimate(
-                new MultiYearExperimentalEstimateRequest("NOT_A_REGION", null, "CULTURE_ART", "GREEN", 5)));
+                new MultiYearExperimentalEstimateRequest("NOT_A_REGION", null, "CULTURE_ART", "GREEN", 5, null, null)));
     }
 }

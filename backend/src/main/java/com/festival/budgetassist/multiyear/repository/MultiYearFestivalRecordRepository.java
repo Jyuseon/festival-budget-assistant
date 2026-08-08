@@ -33,4 +33,14 @@ public interface MultiYearFestivalRecordRepository extends JpaRepository<MultiYe
      * 전체 10,198행을 애플리케이션 메모리로 가져온 뒤 걸러내는 것보다 효율적이다.
      */
     List<MultiYearFestivalRecord> findByDatasetYearLessThan(Integer year);
+
+    /**
+     * planningYear 일반화({@code estimateForPlanning})용 - {@code datasetYear <= year}인 record만
+     * 걸러 온다. {@code ReferenceDataPolicy.INCLUDE_PUBLISHED_SAME_YEAR}가 planningYear 자체의
+     * 데이터도 참고할 수 있어야 하므로 {@code findByDatasetYearLessThan}보다 한 해 더 넓게 가져온다
+     * - 실제 어느 정책을 적용할지는 {@code MultiYearBacktestService.estimateForPlanning} 내부의
+     * {@code MultiYearReferenceYearFilter}가 다시 한 번 정확하게 결정한다(이 쿼리는 성능 목적의
+     * 상한선일 뿐, leakage 방지의 최종 방어선이 아니다).
+     */
+    List<MultiYearFestivalRecord> findByDatasetYearLessThanEqual(Integer year);
 }

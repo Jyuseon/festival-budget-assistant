@@ -1,0 +1,56 @@
+================ V4 Hybrid parameter sensitivity (cap x qualityLossBudget, 9 combos) ================
+
+---- [1] candidate composition (district=null 벤치마크, n=670) ----
+combo                                 n   medN  medDistY   medEffY medAvgSim medMinSim
+V0_CURRENT (참고)                     670     50      1.00      1.00     0.813     0.750
+V4_HYBRID_cap40pct_loss0.05         670     50      7.00      4.80     0.925     0.923
+V4_HYBRID_cap40pct_loss0.10         670     50      7.00      4.89     0.925     0.923
+V4_HYBRID_cap40pct_loss0.15         670     50      7.00      4.91     0.925     0.923
+V4_HYBRID_cap50pct_loss0.05         670     50      7.00      4.80     0.925     0.923
+V4_HYBRID_cap50pct_loss0.10         670     50      7.00      4.89     0.925     0.923
+V4_HYBRID_cap50pct_loss0.15         670     50      7.00      4.91     0.925     0.923
+V4_HYBRID_cap60pct_loss0.05         670     50      7.00      4.80     0.925     0.923
+V4_HYBRID_cap60pct_loss0.10         670     50      7.00      4.89     0.925     0.923
+V4_HYBRID_cap60pct_loss0.15         670     50      7.00      4.91     0.925     0.923
+
+---- [2] leakage-safe backtest, fold=train<=2025->2026 (n=1238 evalTargets) ----
+  [V0_CURRENT (참고)]
+    MAE=375,748,012 MdAPE=69.2% P75APE=118.0% P90APE=354.2% MedianALE=0.814 medSignedLogErr=-0.097 medRatio=0.908
+    within25%=15.2% within50%=36.3% 0.5x~2x=43.5% typicalRangeCoverage=49.8%
+    규모별 signedLogError: <= 100M=1.094  100M~300M=-0.057  300M~1B=-0.856  1B~3B=-1.682  > 3B=-2.578  
+  [V4_HYBRID_cap40pct_loss0.05]
+    MAE=368,864,262 MdAPE=64.6% P75APE=97.3% P90APE=308.5% MedianALE=0.789 medSignedLogErr=-0.140 medRatio=0.869
+    within25%=18.1% within50%=37.0% 0.5x~2x=44.7% typicalRangeCoverage=50.2%
+    규모별 signedLogError: <= 100M=0.957  100M~300M=-0.064  300M~1B=-0.851  1B~3B=-1.532  > 3B=-2.589  
+  [V4_HYBRID_cap40pct_loss0.10]
+    MAE=374,771,611 MdAPE=65.3% P75APE=93.9% P90APE=296.4% MedianALE=0.823 medSignedLogErr=-0.179 medRatio=0.836
+    within25%=18.3% within50%=36.9% 0.5x~2x=43.9% typicalRangeCoverage=48.5%
+    규모별 signedLogError: <= 100M=0.951  100M~300M=-0.118  300M~1B=-0.931  1B~3B=-1.697  > 3B=-2.764  
+  [V4_HYBRID_cap40pct_loss0.15]
+    MAE=374,810,373 MdAPE=65.3% P75APE=93.9% P90APE=296.7% MedianALE=0.822 medSignedLogErr=-0.175 medRatio=0.839
+    within25%=18.2% within50%=36.9% 0.5x~2x=43.9% typicalRangeCoverage=48.2%
+    규모별 signedLogError: <= 100M=0.946  100M~300M=-0.111  300M~1B=-0.920  1B~3B=-1.697  > 3B=-2.764  
+  [V4_HYBRID_cap50pct_loss0.05]
+    MAE=368,589,026 MdAPE=64.5% P75APE=96.4% P90APE=307.0% MedianALE=0.789 medSignedLogErr=-0.140 medRatio=0.869
+    within25%=18.0% within50%=37.0% 0.5x~2x=44.7% typicalRangeCoverage=50.2%
+    규모별 signedLogError: <= 100M=0.957  100M~300M=-0.064  300M~1B=-0.851  1B~3B=-1.532  > 3B=-2.574  
+  [V4_HYBRID_cap50pct_loss0.10]
+    MAE=374,201,642 MdAPE=65.2% P75APE=93.7% P90APE=289.9% MedianALE=0.815 medSignedLogErr=-0.186 medRatio=0.830
+    within25%=18.4% within50%=37.4% 0.5x~2x=44.2% typicalRangeCoverage=48.6%
+    규모별 signedLogError: <= 100M=0.916  100M~300M=-0.133  300M~1B=-0.946  1B~3B=-1.709  > 3B=-2.764  
+  [V4_HYBRID_cap50pct_loss0.15]
+    MAE=374,718,870 MdAPE=65.3% P75APE=93.7% P90APE=295.1% MedianALE=0.819 medSignedLogErr=-0.186 medRatio=0.830
+    within25%=18.3% within50%=37.3% 0.5x~2x=44.1% typicalRangeCoverage=48.0%
+    규모별 signedLogError: <= 100M=0.916  100M~300M=-0.133  300M~1B=-0.920  1B~3B=-1.700  > 3B=-2.764  
+  [V4_HYBRID_cap60pct_loss0.05]
+    MAE=368,186,769 MdAPE=64.7% P75APE=97.3% P90APE=305.5% MedianALE=0.791 medSignedLogErr=-0.152 medRatio=0.859
+    within25%=17.9% within50%=37.0% 0.5x~2x=44.7% typicalRangeCoverage=50.0%
+    규모별 signedLogError: <= 100M=0.956  100M~300M=-0.064  300M~1B=-0.851  1B~3B=-1.531  > 3B=-2.574  
+  [V4_HYBRID_cap60pct_loss0.10]
+    MAE=374,067,183 MdAPE=65.3% P75APE=93.7% P90APE=295.1% MedianALE=0.814 medSignedLogErr=-0.179 medRatio=0.836
+    within25%=18.7% within50%=37.4% 0.5x~2x=44.2% typicalRangeCoverage=48.5%
+    규모별 signedLogError: <= 100M=0.925  100M~300M=-0.118  300M~1B=-0.931  1B~3B=-1.700  > 3B=-2.764  
+  [V4_HYBRID_cap60pct_loss0.15]
+    MAE=374,360,587 MdAPE=65.3% P75APE=93.7% P90APE=295.8% MedianALE=0.818 medSignedLogErr=-0.172 medRatio=0.842
+    within25%=18.6% within50%=37.2% 0.5x~2x=44.1% typicalRangeCoverage=48.1%
+    규모별 signedLogError: <= 100M=0.916  100M~300M=-0.110  300M~1B=-0.910  1B~3B=-1.697  > 3B=-2.764  

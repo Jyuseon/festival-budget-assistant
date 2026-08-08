@@ -2,9 +2,12 @@ package com.festival.budgetassist.multiyear.backtest;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 
 import org.springframework.stereotype.Service;
 
@@ -13,7 +16,10 @@ import com.festival.budgetassist.estimate.FallbackLevel;
 import com.festival.budgetassist.festival.domain.FestivalType;
 import com.festival.budgetassist.festival.domain.Region;
 import com.festival.budgetassist.festival.domain.VenueType;
+import com.festival.budgetassist.multiyear.domain.MultiYearDatasetPublicationStatus;
+import com.festival.budgetassist.multiyear.domain.MultiYearDatasetPublicationStatusValue;
 import com.festival.budgetassist.multiyear.domain.MultiYearFestivalRecord;
+import com.festival.budgetassist.multiyear.repository.MultiYearDatasetPublicationStatusRepository;
 import com.festival.budgetassist.multiyear.repository.MultiYearFestivalRecordRepository;
 
 /**
@@ -50,6 +56,9 @@ public class MultiYearBacktestService {
     private final MultiYearDataQualityV3Calculator v3Calculator;
     private final AnnualPriceIndexProvider priceIndexProvider;
     private final AlgorithmConfig config;
+    private final MultiYearReferenceYearFilter referenceYearFilter;
+    private final MultiYearCandidateSelectorV1 candidateSelectorV1;
+    private final MultiYearDatasetPublicationStatusRepository publicationStatusRepository;
 
     MultiYearBacktestService(MultiYearFestivalRecordRepository recordRepository,
                               MultiYearBacktestDatasetBuilder datasetBuilder,
@@ -57,7 +66,10 @@ public class MultiYearBacktestService {
                               MultiYearSimilarityCalculator similarityCalculator,
                               MultiYearDataQualityV3Calculator v3Calculator,
                               AnnualPriceIndexProvider priceIndexProvider,
-                              AlgorithmConfig config) {
+                              AlgorithmConfig config,
+                              MultiYearReferenceYearFilter referenceYearFilter,
+                              MultiYearCandidateSelectorV1 candidateSelectorV1,
+                              MultiYearDatasetPublicationStatusRepository publicationStatusRepository) {
         this.recordRepository = recordRepository;
         this.datasetBuilder = datasetBuilder;
         this.candidateSelector = candidateSelector;
@@ -65,6 +77,9 @@ public class MultiYearBacktestService {
         this.v3Calculator = v3Calculator;
         this.priceIndexProvider = priceIndexProvider;
         this.config = config;
+        this.referenceYearFilter = referenceYearFilter;
+        this.candidateSelectorV1 = candidateSelectorV1;
+        this.publicationStatusRepository = publicationStatusRepository;
     }
 
     /** {@link #runFold(List, MultiYearBacktestFold)}의 공개 진입점 - DB 전체를 한 번 읽어 fold별로 재사용한다. */
@@ -183,6 +198,133 @@ public class MultiYearBacktestService {
                 fs.selection().level().name(), stats.similarityScoreAvg(), stats.v3().score(),
                 topCandidates
         );
+    }
+
+    // ------------------------------------------------------------------
+    // planningYear 일반화 - Budget Planning Assistant 전용 진입점(2절/7~13절). predictForQuery
+    // (V0, targetYear=2026 고정)와는 완전히 독립적이다 - 서로 다른 selector/다른 연도 범위를 쓴다.
+    // ------------------------------------------------------------------
+
+    /**
+     * planningYear를 직접 받는 일반화된 예측 진입점. {@link #predictForQuery}와의 차이:
+     * <ul>
+     *   <li>{@link MultiYearBacktestFold} 상수(연도마다 새로 추가해야 하는 backtest 전용 값)에
+     *       전혀 의존하지 않는다 - planningYear가 몇 년이든(2026, 2027, ...) 코드 변경 없이
+     *       동작한다.</li>
+     *   <li>참고 데이터 범위는 {@link ReferenceDataPolicy}로 결정하고, {@link
+     *       MultiYearReferenceYearFilter}가 leakage-safe backtest 코드({@link
+     *       MultiYearBacktestDatasetBuilder})와 완전히 분리된 자체 필터로 연도를 자른다.</li>
+     *   <li>candidate selection은 V0가 아니라 selector lab에서 확정한 {@link
+     *       MultiYearCandidateSelectorV1}을 쓴다. 그 이후(유사도/기간보정/winsorize/threshold+
+     *       상위 N건 컷)는 {@link #scoreAndFinalize}로 baseline과 동일한 공식을 그대로 쓴다.</li>
+     * </ul>
+     *
+     * @param requestedPolicy 호출자가 요청한 정책 - {@code INCLUDE_PUBLISHED_SAME_YEAR}인데
+     *                        planningYear 데이터셋이 아직 공개 완료로 표시돼 있지 않으면 자동으로
+     *                        {@code HISTORICAL_ONLY}로 낮춰 적용한다(같은 연도 데이터를 무조건
+     *                        포함하지 않는다 - 결과의 {@code appliedReferenceDataPolicy}로 확인 가능).
+     * @param allRecords 필터링 전 전체 record - planningYear보다 미래인 record가 섞여 있어도 이
+     *                   메서드가 절대 포함시키지 않는다(leakage-safe, {@link
+     *                   MultiYearReferenceYearFilter} 참고).
+     */
+    public MultiYearPlanningEstimateResult estimateForPlanning(Region regionCode, String district, Set<FestivalType> festivalTypeTokens,
+                                                                 VenueType venueType, Integer durationDays,
+                                                                 int planningYear, ReferenceDataPolicy requestedPolicy,
+                                                                 List<MultiYearFestivalRecord> allRecords) {
+        ReferenceDataPolicy appliedPolicy = resolveEffectivePolicy(planningYear, requestedPolicy);
+        boolean includeSameYear = appliedPolicy == ReferenceDataPolicy.INCLUDE_PUBLISHED_SAME_YEAR;
+        List<MultiYearFestivalRecord> referencePool = referenceYearFilter.filter(allRecords, planningYear, includeSameYear);
+
+        int referenceYearFrom = referencePool.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).min().orElse(planningYear);
+        int referenceYearTo = includeSameYear ? planningYear : planningYear - 1;
+
+        MultiYearBacktestQuery query = new MultiYearBacktestQuery(regionCode, district, festivalTypeTokens, venueType, durationDays);
+        FinalSample fs = selectFinalSample(candidateSelectorV1, query, planningYear, referencePool, false);
+        if (fs == null) {
+            return MultiYearPlanningEstimateResult.empty(planningYear, requestedPolicy, appliedPolicy, referenceYearFrom, referenceYearTo);
+        }
+
+        double[] weights = fs.finalSample().stream().mapToDouble(c -> c.score().weight()).toArray();
+        CoreStats stats = computeCoreStats(fs, weights);
+
+        List<MultiYearFestivalRecord> sampleRecords = fs.finalSample().stream().map(MultiYearScoredCandidate::record).toList();
+        int distinctYearsUsed = (int) sampleRecords.stream().map(MultiYearFestivalRecord::getDatasetYear).distinct().count();
+        Integer earliestSourceYear = sampleRecords.isEmpty() ? null
+                : sampleRecords.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).min().getAsInt();
+        Integer latestSourceYear = sampleRecords.isEmpty() ? null
+                : sampleRecords.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).max().getAsInt();
+
+        double effectiveYearCount = effectiveYearCount(fs.finalSample(), weights);
+        List<MultiYearPlanningYearWeightShare> yearWeightBreakdown = yearWeightBreakdown(fs.finalSample(), weights);
+
+        List<MultiYearPredictionCandidate> topCandidates = fs.finalSample().stream()
+                .limit(10)
+                .map(this::toPredictionCandidate)
+                .toList();
+
+        return new MultiYearPlanningEstimateResult(
+                planningYear, requestedPolicy, appliedPolicy, referenceYearFrom, referenceYearTo,
+                Math.round(stats.estimated()), Math.round(stats.weightedAverage()), Math.round(stats.recommendedBudget()),
+                Math.round(stats.p25()), Math.round(stats.p50()), Math.round(stats.p75()),
+                stats.sampleCount(), distinctYearsUsed, effectiveYearCount, earliestSourceYear, latestSourceYear,
+                fs.selection().level().name(), stats.similarityScoreAvg(), stats.v3().score(),
+                yearWeightBreakdown, topCandidates
+        );
+    }
+
+    /**
+     * {@code INCLUDE_PUBLISHED_SAME_YEAR}를 요청해도 해당 planningYear의 {@link
+     * MultiYearDatasetPublicationStatus}가 {@code PUBLISHED_COMPLETE}로 표시돼 있지 않으면
+     * {@code HISTORICAL_ONLY}로 낮춰 적용한다(9절: "같은 연도 데이터를 무조건 포함하면 안 된다").
+     * 행이 아예 없는 연도는 PARTIAL과 동일하게 취급한다(안전한 기본값).
+     */
+    private ReferenceDataPolicy resolveEffectivePolicy(int planningYear, ReferenceDataPolicy requested) {
+        if (requested != ReferenceDataPolicy.INCLUDE_PUBLISHED_SAME_YEAR) {
+            return ReferenceDataPolicy.HISTORICAL_ONLY;
+        }
+        Optional<MultiYearDatasetPublicationStatus> status = publicationStatusRepository.findByDatasetYear(planningYear);
+        boolean publishedComplete = status.isPresent()
+                && status.get().getStatus() == MultiYearDatasetPublicationStatusValue.PUBLISHED_COMPLETE;
+        return publishedComplete ? ReferenceDataPolicy.INCLUDE_PUBLISHED_SAME_YEAR : ReferenceDataPolicy.HISTORICAL_ONLY;
+    }
+
+    /** Simpson effective number - 진단값이 아니라 응답 필드로 노출한다(13절: "사용자가 실제로 어느 연도 데이터를 얼마나 참고했는지"). */
+    private double effectiveYearCount(List<MultiYearScoredCandidate> finalSample, double[] weights) {
+        Map<Integer, Double> weightByYear = new LinkedHashMap<>();
+        double total = 0;
+        for (int i = 0; i < finalSample.size(); i++) {
+            int year = finalSample.get(i).record().getDatasetYear();
+            weightByYear.merge(year, weights[i], Double::sum);
+            total += weights[i];
+        }
+        if (total <= 0) {
+            return 0.0;
+        }
+        double sumSquaredShare = 0;
+        for (double w : weightByYear.values()) {
+            double share = w / total;
+            sumSquaredShare += share * share;
+        }
+        return sumSquaredShare > 0 ? 1.0 / sumSquaredShare : 0.0;
+    }
+
+    private List<MultiYearPlanningYearWeightShare> yearWeightBreakdown(List<MultiYearScoredCandidate> finalSample, double[] weights) {
+        Map<Integer, Long> countByYear = new TreeMap<>();
+        Map<Integer, Double> weightByYear = new TreeMap<>();
+        double total = 0;
+        for (int i = 0; i < finalSample.size(); i++) {
+            int year = finalSample.get(i).record().getDatasetYear();
+            countByYear.merge(year, 1L, Long::sum);
+            weightByYear.merge(year, weights[i], Double::sum);
+            total += weights[i];
+        }
+        double finalTotal = total;
+        List<MultiYearPlanningYearWeightShare> result = new ArrayList<>();
+        countByYear.forEach((year, count) -> {
+            double share = finalTotal > 0 ? weightByYear.getOrDefault(year, 0.0) / finalTotal : 0.0;
+            result.add(new MultiYearPlanningYearWeightShare(year, count.intValue(), share));
+        });
+        return result;
     }
 
     private MultiYearPredictionCandidate toPredictionCandidate(MultiYearScoredCandidate c) {
