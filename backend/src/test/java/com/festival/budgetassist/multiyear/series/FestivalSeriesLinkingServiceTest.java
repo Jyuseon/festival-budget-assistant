@@ -259,4 +259,42 @@ class FestivalSeriesLinkingServiceTest {
         assertEquals(0, report.highestScoreCandidates().size() + report.mediumReviewCandidates().size(),
                 "이름이 너무 다르면 후보 자체가 생성되지 않아야 함");
     }
+
+    // ------------------------------------------------------------------
+    // 9) district placeholder 정규화: "본청"/"시자체"/"-" 등은 서로 다른 값이 아니라 전부
+    //    REGION_LEVEL로 취급돼야 한다 (실제 "대구포크페스티벌" 사례 재현).
+    // ------------------------------------------------------------------
+
+    @Test
+    void regionLevelDistrictPlaceholders_areTreatedAsTheSameRegionLevelSeriesNotMismatched() {
+        MultiYearFestivalRecord a = row(2020, 1, "대구포크페스티벌", "대구", Region.DAEGU, "시자체", "CULTURE_ART");
+        MultiYearFestivalRecord b = row(2022, 2, "대구포크페스티벌", "대구", Region.DAEGU, "본청", "CULTURE_ART");
+        MultiYearFestivalRecord c = row(2023, 3, "대구포크페스티벌", "대구", Region.DAEGU, "-", "CULTURE_ART");
+
+        linkingService.linkAll();
+
+        assertEquals(1, seriesRepository.count(), "시자체/본청/-는 전부 같은 REGION_LEVEL 키로 묶여야 함");
+        FestivalSeries series = seriesRepository.findAll().get(0);
+        assertEquals(SeriesScope.REGION_LEVEL, series.getScope());
+        assertEquals(FestivalSeriesMatchStatus.DETERMINISTIC, series.getMatchStatus());
+        assertEquals(3, series.getRecordCount());
+        assertEquals(MatchMethod.EXACT, membershipOf(a.getId()).getMatchMethod());
+        assertEquals(MatchMethod.EXACT, membershipOf(b.getId()).getMatchMethod());
+        assertEquals(MatchMethod.EXACT, membershipOf(c.getId()).getMatchMethod());
+    }
+
+    @Test
+    void realDistrictsWithSuffixNoiseOrTypos_areNotDemotedToRegionLevel() {
+        // "중구청"은 placeholder가 아니라 실제 "중구" + 접미어라 null(REGION_LEVEL)로 강등되면
+        // 안 된다. (이름/유형/연도가 전부 같으면 fuzzy가 별도로 이 둘을 이어붙일 수는 있지만,
+        // 그건 이 테스트의 관심사가 아니다 - district 문자열 자체가 placeholder로 오인돼
+        // REGION_LEVEL로 떨어지지 않는지만 확인한다.)
+        row(2020, 1, "축제A", "대구", Region.DAEGU, "중구청", "CULTURE_ART");
+        row(2020, 2, "축제A", "대구", Region.DAEGU, "중구", "CULTURE_ART");
+
+        linkingService.linkAll();
+
+        seriesRepository.findAll().forEach(s ->
+                assertEquals(SeriesScope.DISTRICT_LEVEL, s.getScope(), "\"중구청\"/\"중구\" 모두 실제 시군구라 REGION_LEVEL로 강등되면 안 됨"));
+    }
 }

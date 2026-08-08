@@ -451,14 +451,24 @@ public class FestivalSeriesLinkingService {
         return r.getRegionRaw() == null ? "UNKNOWN" : r.getRegionRaw().trim();
     }
 
+    /**
+     * districtText(CSV의 최소 정규화 district 컬럼)를 우선하고, 없으면 districtRaw로
+     * 대체한다. 어느 쪽이든 {@link DistrictPlaceholderNormalizer}가 "실제 시군구가 아닌
+     * region-level 표현"("-", "본청", "시자체" 등)으로 판정하면 null을 반환해
+     * {@link SeriesScope#REGION_LEVEL}로 취급한다 - 이 값은 클러스터링 키 계산에만 쓰이고
+     * {@code MultiYearFestivalRecord.districtRaw/districtText} 원본은 절대 바꾸지 않는다.
+     */
     private static String resolveDistrictKey(MultiYearFestivalRecord r) {
+        String candidate = null;
         if (r.getDistrictText() != null && !r.getDistrictText().isBlank()) {
-            return r.getDistrictText().trim();
+            candidate = r.getDistrictText().trim();
+        } else if (r.getDistrictRaw() != null && !r.getDistrictRaw().isBlank()) {
+            candidate = r.getDistrictRaw().trim();
         }
-        if (r.getDistrictRaw() != null && !r.getDistrictRaw().isBlank() && !"-".equals(r.getDistrictRaw().trim())) {
-            return r.getDistrictRaw().trim();
+        if (candidate == null || DistrictPlaceholderNormalizer.isRegionLevelPlaceholder(candidate)) {
+            return null;
         }
-        return null;
+        return candidate;
     }
 
     record BucketKey(SeriesScope scope, String regionKey) {
