@@ -23,6 +23,12 @@ import com.festival.budgetassist.multiyear.repository.MultiYearFestivalRecordRep
  * {@code ConfidenceCalculator}/{@code WeightedStatistics}/{@code DurationAdjuster} 코드는
  * 전혀 건드리지 않고 import하지도 않는다 - {@link AlgorithmConfig}(읽기 전용 공개 설정 Bean)만
  * 공유해서 같은 가중치/threshold 값을 쓴다.</p>
+ *
+ * <p>후보 선정({@link #selectFinalSample})과 통계 집계({@link #aggregate})를 분리해 둔 것은
+ * {@link MultiYearSeriesCorrectionBacktestService}(festivalSeries 중복 보정 S0/S1/S2 비교
+ * 실험)가 "정확히 같은 candidate selection 결과"를 재사용하면서 최종 weight만 다르게 넣어
+ * 재집계할 수 있게 하기 위해서다 - 두 메서드는 package-private이라 같은 패키지 안에서만
+ * 재사용된다.</p>
  */
 @Service
 public class MultiYearBacktestService {
@@ -83,6 +89,22 @@ public class MultiYearBacktestService {
     }
 
     private MultiYearBacktestPrediction predictOne(MultiYearFestivalRecord target, List<MultiYearFestivalRecord> trainingPool) {
+        FinalSample fs = selectFinalSample(target, trainingPool);
+        if (fs == null) {
+            return null;
+        }
+        double[] weights = fs.finalSample().stream().mapToDouble(c -> c.score().weight()).toArray();
+        return aggregate(target, fs, weights);
+    }
+
+    /**
+     * 후보 선정 단계(계층형 fallback -> 유사도 -> winsorize -> threshold+상위 N건) - series
+     * correction 여부와 무관하게 항상 같은 결과를 내야 한다(지시사항 5절: "series correction
+     * 때문에 CandidateSelector 자체가 다른 후보를 뽑도록 하지 마"). 정렬/상한 컷은 항상 원본
+     * similarity weight 기준이다 - series correction은 이 메서드가 반환한 finalSample이 정해진
+     * "다음" 단계({@link #aggregate})에서만 적용된다.
+     */
+    FinalSample selectFinalSample(MultiYearFestivalRecord target, List<MultiYearFestivalRecord> trainingPool) {
         MultiYearBacktestQuery query = MultiYearBacktestQuery.from(target);
 
         MultiYearCandidateSelectionResult selection = candidateSelector.select(trainingPool, query);
@@ -124,10 +146,23 @@ public class MultiYearBacktestService {
         if (finalSample.isEmpty()) {
             return null;
         }
+        return new FinalSample(query, selection, finalSample);
+    }
+
+    /**
+     * {@link #selectFinalSample}이 고정해 놓은 finalSample을 주어진 weight 배열(순서는
+     * {@code fs.finalSample()}과 동일)로 집계한다. baseline은 항상 원본 {@code score.weight()}를
+     * 그대로 넣고, series correction 실험은 {@code correctedWeight = weight * seriesFactor}로
+     * 바꿔치기한 배열을 넣는다 - 그 외 공식(기간보정/winsorize/후보선정/legacy confidence 구조)은
+     * 전혀 건드리지 않는다.
+     */
+    MultiYearBacktestPrediction aggregate(MultiYearFestivalRecord target, FinalSample fs, double[] weights) {
+        List<MultiYearScoredCandidate> finalSample = fs.finalSample();
+        MultiYearBacktestQuery query = fs.query();
+        MultiYearCandidateSelectionResult selection = fs.selection();
 
         int sampleCount = finalSample.size();
         double[] values = finalSample.stream().mapToDouble(MultiYearScoredCandidate::winsorizedBudgetKrw).toArray();
-        double[] weights = finalSample.stream().mapToDouble(c -> c.score().weight()).toArray();
         double[] similarities = finalSample.stream().mapToDouble(c -> c.score().similarity()).toArray();
         double[] hasDurationFlags = finalSample.stream().mapToDouble(c -> c.record().getDurationDays() != null ? 1.0 : 0.0).toArray();
 
@@ -212,5 +247,10 @@ public class MultiYearBacktestService {
             score = Math.min(score, config.getConfidenceLowSampleCapScore());
         }
         return score;
+    }
+
+    /** {@link #selectFinalSample}의 결과 - 후보선정+유사도+winsorize까지 끝난, 재집계 준비가 된 표본. */
+    record FinalSample(MultiYearBacktestQuery query, MultiYearCandidateSelectionResult selection,
+                        List<MultiYearScoredCandidate> finalSample) {
     }
 }

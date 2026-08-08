@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -440,5 +442,56 @@ class FestivalSeriesLinkingServiceTest {
         assertTrue(report.chainClusterThresholdComparison().containsKey("0.95"));
         assertTrue(report.chainClusterThresholdComparison().get("0.90") >= report.chainClusterThresholdComparison().get("0.95"),
                 "threshold가 낮을수록(느슨할수록) 통과하는 컴포넌트 수가 같거나 많아야 함");
+    }
+
+    // ------------------------------------------------------------------
+    // 11) computeSeriesGroupsInMemory - linkAll()과 정확히 같은 partition을 재현해야 함
+    //     (leakage-safe backtest의 fold-local series 재계산이 이 메서드에 의존한다)
+    // ------------------------------------------------------------------
+
+    @Test
+    void computeSeriesGroupsInMemory_reproducesExactSamePartitionAsLinkAll() {
+        // DETERMINISTIC(정규화 이름 완전일치) 2건
+        MultiYearFestivalRecord d1 = row(2017, 1, "동일축제", "경남", Region.GYEONGNAM, "진주시", "CULTURE_ART");
+        MultiYearFestivalRecord d2 = row(2018, 2, "동일축제", "경남", Region.GYEONGNAM, "진주시", "CULTURE_ART");
+        // FUZZY(유일한 HIGH 후보) 2건
+        MultiYearFestivalRecord f1 = row(2017, 3, "봄꽃축제 행사", "충북", Region.CHUNGBUK, "청주시", "NATURE_ECOLOGY");
+        MultiYearFestivalRecord f2 = row(2018, 4, "봄꽃축제행사", "충북", Region.CHUNGBUK, "청주시", "NATURE_ECOLOGY");
+        // strict chain(3건 안전한 체인)
+        MultiYearFestivalRecord c1 = row(2017, 5, chainBase() + "1", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        MultiYearFestivalRecord c2 = row(2018, 6, chainBase() + "2", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        MultiYearFestivalRecord c3 = row(2019, 7, chainBase() + "3", "경기", Region.GYEONGGI, "가평군", "CULTURE_ART");
+        // 완전히 무관한 UNMATCHED singleton
+        MultiYearFestivalRecord u1 = row(2020, 8, "아무관계없는행사", "제주", Region.JEJU, "서귀포시", "COMMUNITY");
+
+        linkingService.linkAll();
+        Map<Long, Long> officialGroupBySeriesId = new LinkedHashMap<>();
+        for (MultiYearFestivalRecord r : List.of(d1, d2, f1, f2, c1, c2, c3, u1)) {
+            officialGroupBySeriesId.put(r.getId(), membershipOf(r.getId()).getFestivalSeries().getId());
+        }
+
+        Map<Long, Long> inMemoryGroup = linkingService.computeSeriesGroupsInMemory(recordRepository.findAll());
+
+        // 두 partition이 "record id -> group id" 자체는(합성 id라) 다를 수 있지만, "어떤 record끼리
+        // 같은 그룹인가"는 완전히 같아야 한다 - 모든 쌍에 대해 같은 그룹 여부를 비교한다.
+        List<MultiYearFestivalRecord> all = List.of(d1, d2, f1, f2, c1, c2, c3, u1);
+        for (MultiYearFestivalRecord a : all) {
+            for (MultiYearFestivalRecord b : all) {
+                boolean officialSame = officialGroupBySeriesId.get(a.getId()).equals(officialGroupBySeriesId.get(b.getId()));
+                boolean inMemorySame = inMemoryGroup.get(a.getId()).equals(inMemoryGroup.get(b.getId()));
+                assertEquals(officialSame, inMemorySame,
+                        "record %d/%d의 '같은 series 여부'가 linkAll()과 computeSeriesGroupsInMemory 사이에 달라짐"
+                                .formatted(a.getId(), b.getId()));
+            }
+        }
+
+        // 구체적으로 기대하는 그룹 크기도 확인(그냥 "같다"만 보는 것보다 더 강한 검증).
+        assertEquals(inMemoryGroup.get(d1.getId()), inMemoryGroup.get(d2.getId()));
+        assertEquals(inMemoryGroup.get(f1.getId()), inMemoryGroup.get(f2.getId()));
+        assertEquals(inMemoryGroup.get(c1.getId()), inMemoryGroup.get(c2.getId()));
+        assertEquals(inMemoryGroup.get(c2.getId()), inMemoryGroup.get(c3.getId()));
+        assertNotEquals(inMemoryGroup.get(u1.getId()), inMemoryGroup.get(d1.getId()));
+        assertNotEquals(inMemoryGroup.get(u1.getId()), inMemoryGroup.get(f1.getId()));
+        assertNotEquals(inMemoryGroup.get(u1.getId()), inMemoryGroup.get(c1.getId()));
     }
 }

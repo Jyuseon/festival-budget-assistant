@@ -198,19 +198,84 @@ public class FestivalSeriesLinkingService {
      * (1) 모든 pairwise 이름 유사도 최솟값이 임계값 이상인지 (2) 유형/district가 서로 충돌하는
      * 쌍이 하나도 없는지 (3) 같은 연도가 중복되지 않는지를 다시 확인해서, 하나라도 실패하면
      * 그 컴포넌트 전체를 병합하지 않는다(부분적으로 병합하지 않음 - 전부 아니면 전무).</p>
+     *
+     * <p>실제 "어떤 컴포넌트를 병합할지" 판단(순수 계산, DB 무관)은 {@link
+     * #computeChainComponentAudits}로 분리돼 있다 - {@link #computeSeriesGroupsInMemory}도
+     * 같은 메서드를 공유해서, "이 record 목록만으로 series를 다시 계산하면" 항상 정확히 같은
+     * chain linking 판단을 재현한다.</p>
      */
     private ChainLinkingResult runChainLinking(List<FestivalSeriesMembership> currentMemberships) {
         List<FestivalSeriesMembership> unmatchedMemberships = currentMemberships.stream()
                 .filter(m -> m.getMatchMethod() == MatchMethod.UNMATCHED)
                 .toList();
 
-        List<Cluster> pool = new ArrayList<>();
         Map<Long, FestivalSeriesMembership> membershipByRecordId = new LinkedHashMap<>();
-        int idx = 0;
         for (FestivalSeriesMembership m : unmatchedMemberships) {
-            MultiYearFestivalRecord r = m.getFestivalRecord();
+            membershipByRecordId.put(m.getFestivalRecord().getId(), m);
+        }
+
+        List<MultiYearFestivalRecord> unmatchedRecords = unmatchedMemberships.stream()
+                .map(FestivalSeriesMembership::getFestivalRecord)
+                .toList();
+        ChainDecision decision = computeChainComponentAudits(unmatchedRecords);
+
+        List<FestivalSeries> removedSeries = new ArrayList<>();
+        List<FestivalSeriesMembership> removedMemberships = new ArrayList<>();
+        List<FestivalSeries> addedSeries = new ArrayList<>();
+        List<FestivalSeriesMembership> addedMemberships = new ArrayList<>();
+
+        for (ChainComponentAudit audit : decision.audits()) {
+            if (!audit.applied()) {
+                continue;
+            }
+            List<MultiYearFestivalRecord> members = audit.members();
+
+            for (MultiYearFestivalRecord r : members) {
+                FestivalSeriesMembership old = membershipByRecordId.get(r.getId());
+                removedMemberships.add(old);
+                removedSeries.add(old.getFestivalSeries());
+            }
+            membershipRepository.deleteAll(members.stream().map(r -> membershipByRecordId.get(r.getId())).toList());
+            // festival_record_id에 UNIQUE 제약이 있어서, 같은 record를 가리키는 새 membership을
+            // 곧바로 저장하면 Hibernate의 기본 flush 순서(insert가 delete보다 먼저 실행됨) 때문에
+            // "삭제되기 전" 상태의 unique 제약을 위반한다 - 반드시 delete를 먼저 DB에 반영(flush)한
+            // 뒤에 insert해야 한다.
+            membershipRepository.flush();
+            seriesRepository.deleteAll(members.stream().map(r -> membershipByRecordId.get(r.getId()).getFestivalSeries()).toList());
+            seriesRepository.flush();
+
+            MultiYearFestivalRecord anchor = pickAnchor(members);
+            FestivalSeries mergedSeries = seriesRepository.save(FestivalSeries.builder()
+                    .canonicalName(FestivalNameNormalizer.normalize(anchor.getFestivalName()))
+                    .canonicalRegion(resolveRegionKey(anchor))
+                    .canonicalDistrict(resolveDistrictKey(anchor))
+                    .firstObservedYear(members.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).min().orElseThrow())
+                    .lastObservedYear(members.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).max().orElseThrow())
+                    .recordCount(members.size())
+                    .matchStatus(FestivalSeriesMatchStatus.CHAIN_MERGED)
+                    .scope(ClusterKey.of(anchor).scope())
+                    .build());
+            addedSeries.add(mergedSeries);
+            for (MultiYearFestivalRecord r : members) {
+                addedMemberships.add(saveMembership(r, mergedSeries, MatchMethod.CHAIN_HIGH_CONFIDENCE,
+                        audit.check().meanPairwiseSimilarity(), MatchConfidence.HIGH));
+            }
+        }
+
+        return new ChainLinkingResult(removedSeries, removedMemberships, addedSeries, addedMemberships,
+                decision.audits(), decision.thresholdComparison());
+    }
+
+    /**
+     * "UNMATCHED인 record 목록"만 입력으로 받아 strict chain linking이 어떤 컴포넌트를
+     * 병합할지 결정하는 순수 계산 - DB를 전혀 읽거나 쓰지 않는다. {@link #runChainLinking}과
+     * {@link #computeSeriesGroupsInMemory} 둘 다 이 메서드를 공유한다.
+     */
+    private ChainDecision computeChainComponentAudits(List<MultiYearFestivalRecord> unmatchedRecords) {
+        List<Cluster> pool = new ArrayList<>();
+        int idx = 0;
+        for (MultiYearFestivalRecord r : unmatchedRecords) {
             pool.add(new Cluster(idx++, ClusterKey.of(r), List.of(r)));
-            membershipByRecordId.put(r.getId(), m);
         }
 
         Map<BucketKey, List<Cluster>> buckets = new LinkedHashMap<>();
@@ -244,11 +309,6 @@ public class FestivalSeriesLinkingService {
         }
 
         List<ChainComponentAudit> audits = new ArrayList<>();
-        List<FestivalSeries> removedSeries = new ArrayList<>();
-        List<FestivalSeriesMembership> removedMemberships = new ArrayList<>();
-        List<FestivalSeries> addedSeries = new ArrayList<>();
-        List<FestivalSeriesMembership> addedMemberships = new ArrayList<>();
-
         int componentSeq = 0;
         for (List<Cluster> component : byRoot.values()) {
             if (component.size() < 2) {
@@ -276,42 +336,69 @@ public class FestivalSeriesLinkingService {
                     .toList();
 
             audits.add(new ChainComponentAudit(componentSeq, members, pickAnchor(members), check, componentEdges, applied, rejectionReason));
+        }
 
-            if (applied) {
-                for (MultiYearFestivalRecord r : members) {
-                    FestivalSeriesMembership old = membershipByRecordId.get(r.getId());
-                    removedMemberships.add(old);
-                    removedSeries.add(old.getFestivalSeries());
-                }
-                membershipRepository.deleteAll(members.stream().map(r -> membershipByRecordId.get(r.getId())).toList());
-                // festival_record_id에 UNIQUE 제약이 있어서, 같은 record를 가리키는 새 membership을
-                // 곧바로 저장하면 Hibernate의 기본 flush 순서(insert가 delete보다 먼저 실행됨) 때문에
-                // "삭제되기 전" 상태의 unique 제약을 위반한다 - 반드시 delete를 먼저 DB에 반영(flush)한
-                // 뒤에 insert해야 한다.
-                membershipRepository.flush();
-                seriesRepository.deleteAll(members.stream().map(r -> membershipByRecordId.get(r.getId()).getFestivalSeries()).toList());
-                seriesRepository.flush();
+        return new ChainDecision(audits, thresholdComparison);
+    }
 
-                MultiYearFestivalRecord anchor = pickAnchor(members);
-                FestivalSeries mergedSeries = seriesRepository.save(FestivalSeries.builder()
-                        .canonicalName(FestivalNameNormalizer.normalize(anchor.getFestivalName()))
-                        .canonicalRegion(resolveRegionKey(anchor))
-                        .canonicalDistrict(resolveDistrictKey(anchor))
-                        .firstObservedYear(members.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).min().orElseThrow())
-                        .lastObservedYear(members.stream().mapToInt(MultiYearFestivalRecord::getDatasetYear).max().orElseThrow())
-                        .recordCount(members.size())
-                        .matchStatus(FestivalSeriesMatchStatus.CHAIN_MERGED)
-                        .scope(component.get(0).key().scope())
-                        .build());
-                addedSeries.add(mergedSeries);
-                for (MultiYearFestivalRecord r : members) {
-                    addedMemberships.add(saveMembership(r, mergedSeries, MatchMethod.CHAIN_HIGH_CONFIDENCE,
-                            check.meanPairwiseSimilarity(), MatchConfidence.HIGH));
-                }
+    // ------------------------------------------------------------------
+    // leakage-safe backtest 등 외부 소비자를 위한 순수 in-memory 재계산
+    // ------------------------------------------------------------------
+
+    /**
+     * festivalSeries v1 규칙(결정적 클러스터링 + fuzzy HIGH 자동연결 + strict chain linking)을
+     * DB에 전혀 읽거나 쓰지 않고 순수 in-memory로 재현한다 - {@link #linkAll()}과 완전히 같은
+     * 알고리즘 코드를 그대로 재사용하지만({@link #buildDeterministicClusters}/{@link
+     * #runFuzzyMatching}/{@link #buildFinalSeries}/{@link #computeChainComponentAudits} 공유),
+     * 그 결과를 저장하지 않고 바로 반환한다.
+     *
+     * <p>leakage-safe backtest처럼 "이 record 목록(예: fold의 training 기간만)으로만 series를
+     * 다시 계산하고 싶다"는 호출자를 위한 것이다 - 전체 2017~2026으로 만들어진 기존
+     * {@code FestivalSeriesMembership}을 잘라 쓰면 미래 record가 transitive bridge 역할을 해
+     * 과거 record의 series grouping에 영향을 줄 수 있는데, 이 메서드는 넘겨받은 목록만 보므로
+     * 그런 영향이 원천적으로 불가능하다.</p>
+     *
+     * @return record id -> 이번 호출에서의 최종 소속 series를 나타내는 synthetic 그룹 id. 이
+     *         id는 호출마다 새로 매겨지는 임의값이라(DB PK 아님) 다른 호출 결과와 비교하면 안
+     *         되고, "이번 호출 안에서 어떤 record끼리 같은 그룹인지"만 의미가 있다.
+     */
+    public Map<Long, Long> computeSeriesGroupsInMemory(List<MultiYearFestivalRecord> records) {
+        List<MultiYearFestivalRecord> sorted = records.stream()
+                .sorted(Comparator.comparing(MultiYearFestivalRecord::getDatasetYear)
+                        .thenComparing(r -> r.getSourceRowNumber() == null ? 0 : r.getSourceRowNumber())
+                        .thenComparing(MultiYearFestivalRecord::getId))
+                .toList();
+
+        List<Cluster> clusters = buildDeterministicClusters(sorted);
+        UnionFind uf = new UnionFind(clusters);
+        runFuzzyMatching(clusters, uf, new ArrayList<>());
+        List<SeriesBuild> builds = buildFinalSeries(clusters, uf);
+
+        Map<Long, Long> groupIdByRecordId = new LinkedHashMap<>();
+        List<MultiYearFestivalRecord> unmatchedRecords = new ArrayList<>();
+        long nextId = 1;
+        for (SeriesBuild build : builds) {
+            long groupId = nextId++;
+            for (MultiYearFestivalRecord r : build.allMembers()) {
+                groupIdByRecordId.put(r.getId(), groupId);
+            }
+            if (build.allMembers().size() == 1) {
+                unmatchedRecords.add(build.allMembers().get(0));
             }
         }
 
-        return new ChainLinkingResult(removedSeries, removedMemberships, addedSeries, addedMemberships, audits, thresholdComparison);
+        ChainDecision decision = computeChainComponentAudits(unmatchedRecords);
+        for (ChainComponentAudit audit : decision.audits()) {
+            if (!audit.applied()) {
+                continue;
+            }
+            long groupId = nextId++;
+            for (MultiYearFestivalRecord r : audit.members()) {
+                groupIdByRecordId.put(r.getId(), groupId);
+            }
+        }
+
+        return groupIdByRecordId;
     }
 
     /**
@@ -862,6 +949,10 @@ public class FestivalSeriesLinkingService {
     /** strict chain linking이 평가한 연결요소 1개(자동 병합됐든 거부됐든 전부 기록). */
     record ChainComponentAudit(int componentId, List<MultiYearFestivalRecord> members, MultiYearFestivalRecord anchor,
                                 PairwiseCheck check, List<ChainEdge> edges, boolean applied, String rejectionReason) {
+    }
+
+    /** {@link #computeChainComponentAudits}의 순수 계산 결과(DB 무관) - 병합 여부 판단 + threshold 비교용. */
+    record ChainDecision(List<ChainComponentAudit> audits, Map<String, Integer> thresholdComparison) {
     }
 
     record ChainLinkingResult(List<FestivalSeries> removedSeries, List<FestivalSeriesMembership> removedMemberships,
