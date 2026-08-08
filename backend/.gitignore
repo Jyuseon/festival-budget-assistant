@@ -40,3 +40,5 @@ src/main/resources/application-local.yml
 ### 로컬 분석 CLI 산출물 ###
 confidence-analysis-report.txt
 multiyear-series-linking-report.txt
+multiyear-backtest-baseline-report.txt
+multiyear-backtest-baseline-predictions.csv
