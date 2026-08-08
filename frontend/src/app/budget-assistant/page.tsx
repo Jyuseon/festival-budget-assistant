@@ -131,7 +131,7 @@ export default function BudgetAssistantPage() {
   }
 
   return (
-    <main className="mx-auto flex max-w-5xl flex-col gap-6 p-8 font-sans">
+    <main className="mx-auto flex max-w-7xl flex-col gap-6 p-8 font-sans">
       <header>
         <h1 className="text-2xl font-bold">축제 예산 판단 어시스트</h1>
         <p className="mt-1 text-sm text-gray-500">
@@ -182,58 +182,73 @@ export default function BudgetAssistantPage() {
             />
           )}
 
-          {estimateState.kind !== "idle" && (
-            <div className="flex items-center gap-3 text-xs font-semibold text-gray-400">
-              <span className="h-px flex-1 bg-gray-300" />
-              <span>기존 2026 기준 · 현재 서비스 계산</span>
-              <span className="h-px flex-1 bg-gray-300" />
-            </div>
-          )}
+          {(estimateState.kind !== "idle" || multiYearState.kind !== "idle") && (
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-3 text-xs font-semibold text-gray-400">
+                  <span className="h-px flex-1 bg-gray-300" />
+                  <span>기존 2026 기준 · 현재 서비스 계산</span>
+                  <span className="h-px flex-1 bg-gray-300" />
+                </div>
 
-          {estimateState.kind === "loading" && (
-            <div className="rounded border border-gray-300 p-6 text-sm text-gray-500">
-              계산 중입니다...
-            </div>
-          )}
+                {estimateState.kind === "idle" && (
+                  <div className="rounded border border-dashed border-gray-300 p-6 text-sm text-gray-400">
+                    아직 계산되지 않았습니다.
+                  </div>
+                )}
 
-          {estimateState.kind === "error" && (
-            <div className="rounded border border-red-300 bg-red-50 p-6 text-sm text-red-800">
-              <p className="font-semibold">예산 추정에 실패했습니다.</p>
-              <p className="mt-2">{estimateState.message}</p>
-            </div>
-          )}
+                {estimateState.kind === "loading" && (
+                  <div className="rounded border border-gray-300 p-6 text-sm text-gray-500">
+                    계산 중입니다...
+                  </div>
+                )}
 
-          {estimateState.kind === "ok" && (
-            <div className="flex flex-col gap-4">
-              <EstimateResultCards result={estimateState.data} />
-              <SimilarFestivalsTable festivals={estimateState.data.similarFestivals} />
-              {(estimateState.data.calculationTrace || estimateState.data.confidenceBreakdown) && (
-                <CalculationTracePanel
-                  trace={estimateState.data.calculationTrace ?? []}
-                  confidenceBreakdown={estimateState.data.confidenceBreakdown}
-                />
-              )}
-            </div>
-          )}
+                {estimateState.kind === "error" && (
+                  <div className="rounded border border-red-300 bg-red-50 p-6 text-sm text-red-800">
+                    <p className="font-semibold">예산 추정에 실패했습니다.</p>
+                    <p className="mt-2">{estimateState.message}</p>
+                  </div>
+                )}
 
-          {multiYearState.kind !== "idle" && (
-            <>
-              <div className="mt-2 flex items-center gap-3 text-xs font-semibold text-purple-400">
-                <span className="h-px flex-1 bg-purple-200" />
-                <span>
-                  다년도 계획예산 분석
-                  {multiYearState.kind === "ok" &&
-                    ` · ${multiYearState.data.trainingYearFrom}~${multiYearState.data.trainingYearTo} → ${multiYearState.data.targetYear}`}
-                </span>
-                <span className="h-px flex-1 bg-purple-200" />
+                {estimateState.kind === "ok" && (
+                  <div className="flex flex-col gap-4">
+                    <EstimateResultCards result={estimateState.data} />
+                    <SimilarFestivalsTable festivals={estimateState.data.similarFestivals} />
+                    {(estimateState.data.calculationTrace || estimateState.data.confidenceBreakdown) && (
+                      <CalculationTracePanel
+                        trace={estimateState.data.calculationTrace ?? []}
+                        confidenceBreakdown={estimateState.data.confidenceBreakdown}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
-              <MultiYearExperimentalSection
-                state={multiYearState}
-                productionEstimatedBudgetKrw={
-                  estimateState.kind === "ok" ? estimateState.data.estimatedBudgetKrw : null
-                }
-              />
-            </>
+
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-3 text-xs font-semibold text-purple-400">
+                  <span className="h-px flex-1 bg-purple-200" />
+                  <span>
+                    다년도 계획예산 분석
+                    {multiYearState.kind === "ok" &&
+                      ` · ${multiYearState.data.trainingYearFrom}~${multiYearState.data.trainingYearTo} → ${multiYearState.data.targetYear}`}
+                  </span>
+                  <span className="h-px flex-1 bg-purple-200" />
+                </div>
+
+                {multiYearState.kind === "idle" ? (
+                  <div className="rounded border border-dashed border-gray-300 p-6 text-sm text-gray-400">
+                    아직 계산되지 않았습니다.
+                  </div>
+                ) : (
+                  <MultiYearExperimentalSection
+                    state={multiYearState}
+                    productionEstimatedBudgetKrw={
+                      estimateState.kind === "ok" ? estimateState.data.estimatedBudgetKrw : null
+                    }
+                  />
+                )}
+              </div>
+            </div>
           )}
         </>
       )}
